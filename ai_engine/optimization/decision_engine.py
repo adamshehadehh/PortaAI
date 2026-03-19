@@ -5,8 +5,15 @@ from ai_engine.data.db_client import SessionLocal
 from ai_engine.forecasting.model import load_saved_model
 
 
-# Load the latest engineered features for one asset
+# ============================================
+# DATA LOADING
+# ============================================
+
 def load_latest_features(db, asset_id: int):
+    """
+    Load the most recent engineered features for one asset.
+    These are used as inputs to the trained forecasting model.
+    """
     query = text("""
         SELECT 
             return_1d,
@@ -21,12 +28,13 @@ def load_latest_features(db, asset_id: int):
         ORDER BY date DESC
         LIMIT 1
     """)
-
     return db.execute(query, {"asset_id": asset_id}).fetchone()
 
 
-# Load the latest close price for an asset
 def get_latest_price(db, asset_id: int) -> float:
+    """
+    Load the latest available close price for an asset.
+    """
     row = db.execute(
         text("""
             SELECT close
@@ -41,8 +49,32 @@ def get_latest_price(db, asset_id: int) -> float:
     return float(row[0]) if row else 0.0
 
 
-# Load portfolio cash
+def get_allowed_assets_for_portfolio(db, portfolio_id: int):
+    """
+    Load the asset universe selected by the user for this portfolio.
+    """
+    rows = db.execute(
+        text("""
+            SELECT pa.asset_id, a.symbol
+            FROM portfolio_assets pa
+            JOIN assets a ON pa.asset_id = a.id
+            WHERE pa.portfolio_id = :portfolio_id
+            ORDER BY pa.asset_id
+        """),
+        {"portfolio_id": portfolio_id}
+    ).fetchall()
+
+    return rows
+
+
+# ============================================
+# PORTFOLIO STATE
+# ============================================
+
 def get_portfolio_cash(db, portfolio_id: int) -> float:
+    """
+    Get current available cash in the portfolio.
+    """
     row = db.execute(
         text("""
             SELECT current_cash
@@ -55,8 +87,25 @@ def get_portfolio_cash(db, portfolio_id: int) -> float:
     return float(row[0]) if row else 0.0
 
 
-# Load current position for one asset in one portfolio
+def update_portfolio_cash(db, portfolio_id: int, new_cash: float):
+    """
+    Update the current cash balance after trades are executed.
+    """
+    db.execute(
+        text("""
+            UPDATE portfolios
+            SET current_cash = :new_cash
+            WHERE id = :portfolio_id
+        """),
+        {"new_cash": new_cash, "portfolio_id": portfolio_id}
+    )
+    db.commit()
+
+
 def get_current_position(db, portfolio_id: int, asset_id: int):
+    """
+    Get current quantity and average cost for one asset in a portfolio.
+    """
     row = db.execute(
         text("""
             SELECT id, quantity, average_cost
@@ -69,8 +118,63 @@ def get_current_position(db, portfolio_id: int, asset_id: int):
     return row
 
 
-# Create one portfolio run row
+def get_all_positions(db, portfolio_id: int):
+    """
+    Get all current positions in the portfolio.
+    """
+    rows = db.execute(
+        text("""
+            SELECT asset_id, quantity
+            FROM portfolio_positions
+            WHERE portfolio_id = :portfolio_id
+        """),
+        {"portfolio_id": portfolio_id}
+    ).fetchall()
+
+    return rows
+
+
+def compute_total_portfolio_value(db, portfolio_id: int, cash: float) -> float:
+    """
+    Compute total portfolio value = cash + market value of all positions.
+    """
+    positions = get_all_positions(db, portfolio_id)
+    total_value = cash
+
+    for asset_id, quantity in positions:
+        latest_price = get_latest_price(db, asset_id)
+        total_value += float(quantity) * latest_price
+
+    return total_value
+
+
+def compute_current_weight(db, portfolio_id: int, asset_id: int, total_portfolio_value: float) -> float:
+    """
+    Compute current portfolio weight of one asset.
+    """
+    if total_portfolio_value <= 0:
+        return 0.0
+
+    position = get_current_position(db, portfolio_id, asset_id)
+
+    if position is None:
+        return 0.0
+
+    _, quantity, _ = position
+    latest_price = get_latest_price(db, asset_id)
+    asset_value = float(quantity) * latest_price
+
+    return asset_value / total_portfolio_value
+
+
+# ============================================
+# LOGGING TABLES
+# ============================================
+
 def create_portfolio_run(db, portfolio_id: int, run_type: str = "rebalance", notes: str = None) -> int:
+    """
+    Log one portfolio rebalance/execution cycle.
+    """
     db.execute(
         text("""
             INSERT INTO portfolio_runs (portfolio_id, run_type, status, notes)
@@ -99,33 +203,19 @@ def create_portfolio_run(db, portfolio_id: int, run_type: str = "rebalance", not
     return row[0]
 
 
-# Save allocation decision
-def save_allocation(
-    db,
-    portfolio_run_id: int,
-    portfolio_id: int,
-    asset_id: int,
-    target_weight: float,
-    current_weight: float,
-    reason_summary: str
-):
+def save_allocation(db, portfolio_run_id, portfolio_id, asset_id, target_weight, current_weight, reason_summary):
+    """
+    Store AI target allocation for an asset.
+    """
     db.execute(
         text("""
             INSERT INTO allocations (
-                portfolio_run_id,
-                portfolio_id,
-                asset_id,
-                target_weight,
-                current_weight,
-                reason_summary
+                portfolio_run_id, portfolio_id, asset_id,
+                target_weight, current_weight, reason_summary
             )
             VALUES (
-                :portfolio_run_id,
-                :portfolio_id,
-                :asset_id,
-                :target_weight,
-                :current_weight,
-                :reason_summary
+                :portfolio_run_id, :portfolio_id, :asset_id,
+                :target_weight, :current_weight, :reason_summary
             )
         """),
         {
@@ -140,36 +230,19 @@ def save_allocation(
     db.commit()
 
 
-# Save executed trade
-def save_trade(
-    db,
-    portfolio_run_id: int,
-    portfolio_id: int,
-    asset_id: int,
-    action: str,
-    quantity: float,
-    price: float,
-    amount: float
-):
+def save_trade(db, portfolio_run_id, portfolio_id, asset_id, action, quantity, price, amount):
+    """
+    Store executed trade in the trades table.
+    """
     db.execute(
         text("""
             INSERT INTO trades (
-                portfolio_run_id,
-                portfolio_id,
-                asset_id,
-                action,
-                quantity,
-                price,
-                amount
+                portfolio_run_id, portfolio_id, asset_id,
+                action, quantity, price, amount
             )
             VALUES (
-                :portfolio_run_id,
-                :portfolio_id,
-                :asset_id,
-                :action,
-                :quantity,
-                :price,
-                :amount
+                :portfolio_run_id, :portfolio_id, :asset_id,
+                :action, :quantity, :price, :amount
             )
         """),
         {
@@ -185,43 +258,23 @@ def save_trade(
     db.commit()
 
 
-# Update portfolio cash balance
-def update_portfolio_cash(db, portfolio_id: int, new_cash: float):
-    db.execute(
-        text("""
-            UPDATE portfolios
-            SET current_cash = :new_cash
-            WHERE id = :portfolio_id
-        """),
-        {
-            "new_cash": new_cash,
-            "portfolio_id": portfolio_id,
-        }
-    )
-    db.commit()
+# ============================================
+# POSITION UPDATE
+# ============================================
 
-
-# Create or update asset position after trade
 def update_position(db, portfolio_id: int, asset_id: int, action: str, quantity: float, price: float):
+    """
+    Update portfolio_positions after a BUY or SELL.
+    """
     existing = get_current_position(db, portfolio_id, asset_id)
 
     if existing is None:
         # No position exists yet
-        if action == "buy":
+        if action == "buy" and quantity > 0:
             db.execute(
                 text("""
-                    INSERT INTO portfolio_positions (
-                        portfolio_id,
-                        asset_id,
-                        quantity,
-                        average_cost
-                    )
-                    VALUES (
-                        :portfolio_id,
-                        :asset_id,
-                        :quantity,
-                        :average_cost
-                    )
+                    INSERT INTO portfolio_positions (portfolio_id, asset_id, quantity, average_cost)
+                    VALUES (:portfolio_id, :asset_id, :quantity, :average_cost)
                 """),
                 {
                     "portfolio_id": portfolio_id,
@@ -237,7 +290,8 @@ def update_position(db, portfolio_id: int, asset_id: int, action: str, quantity:
     current_qty = float(current_qty)
     current_avg_cost = float(current_avg_cost)
 
-    if action == "buy":
+    if action == "buy" and quantity > 0:
+        # Recompute weighted average cost after buying more
         new_qty = current_qty + quantity
         new_avg_cost = ((current_qty * current_avg_cost) + (quantity * price)) / new_qty
 
@@ -256,11 +310,11 @@ def update_position(db, portfolio_id: int, asset_id: int, action: str, quantity:
         )
         db.commit()
 
-    elif action == "sell":
+    elif action == "sell" and quantity > 0:
+        # Reduce or fully close the position
         new_qty = current_qty - quantity
 
         if new_qty <= 0:
-            # Fully closed position
             db.execute(
                 text("""
                     DELETE FROM portfolio_positions
@@ -284,8 +338,14 @@ def update_position(db, portfolio_id: int, asset_id: int, action: str, quantity:
             db.commit()
 
 
-# Load trained forecasting model and predict next return
+# ============================================
+# FORECASTING / SCORING
+# ============================================
+
 def predict_next_return(db, asset_id: int) -> float:
+    """
+    Load the trained model for one asset and predict the next return.
+    """
     saved = load_saved_model(asset_id)
     model = saved["model"]
     features = saved["features"]
@@ -295,7 +355,6 @@ def predict_next_return(db, asset_id: int) -> float:
     if latest_row is None:
         return 0.0
 
-    # Build one-row dataframe using latest features
     X_latest = pd.DataFrame([{
         "return_1d": float(latest_row[0]) if latest_row[0] is not None else 0.0,
         "return_7d": float(latest_row[1]) if latest_row[1] is not None else 0.0,
@@ -309,189 +368,261 @@ def predict_next_return(db, asset_id: int) -> float:
     prediction = model.predict(X_latest[features])[0]
     return float(prediction)
 
+# ============================================
+# 🔹 CONFIDENCE → CASH ALLOCATION
+# ============================================
 
-# Basic rule-based decision logic for Phase 1
-def decide_action(predicted_return: float):
-    if predicted_return > 0.01:
-        return "buy", 0.30   # invest 30% of available cash
-    elif predicted_return < -0.01:
-        return "sell", 1.00  # fully exit current position
-    else:
-        return "hold", 0.0
+def compute_invest_fraction(predictions):
+    """
+    Compute how much of the portfolio to invest based on model confidence.
+
+    Confidence is estimated using the average positive predicted return.
+    Higher confidence → invest more
+    Lower confidence → keep more cash
+    """
+
+    # Keep only positive predictions
+    positive = [p["predicted_return"] for p in predictions if p["predicted_return"] > 0]
+
+    if not positive:
+        # No opportunities → stay mostly in cash
+        return 0.2
+
+    avg_confidence = sum(positive) / len(positive)
+
+    # Scale confidence → investment fraction
+    # (tuned so typical values stay in a reasonable range)
+    scale = 100
+
+    invest_fraction = avg_confidence * scale
+
+    # Clamp between 20% and 80%
+    invest_fraction = max(0.2, min(0.8, invest_fraction))
+
+    print(f"\nConfidence: {avg_confidence:.6f}")
+    print(f"Dynamic invest fraction: {invest_fraction:.2f}")
+
+    return invest_fraction
+
+# ============================================
+# TARGET WEIGHT LOGIC
+# ============================================
+
+def compute_target_weights(predictions, invest_fraction):
+    """
+    Convert positive prediction scores into target weights.
+
+    Example:
+    - if total invest_fraction is 60%
+    - and one asset has a stronger positive score than another,
+      it receives a larger share of that 60%.
+    """
+    positive_assets = [p for p in predictions if p["predicted_return"] > 0]
+
+    if not positive_assets:
+        return {}
+
+    total_positive_score = sum(p["predicted_return"] for p in positive_assets)
+
+    if total_positive_score <= 0:
+        return {}
+
+    target_weights = {}
+
+    for p in positive_assets:
+        # Normalize positive scores, then scale by invest_fraction
+        normalized_score = p["predicted_return"] / total_positive_score
+        target_weights[p["asset_id"]] = normalized_score * invest_fraction
+
+    return target_weights
 
 
-# Compute current portfolio weight of one asset
-def compute_current_weight(db, portfolio_id: int, asset_id: int, latest_price: float, cash: float) -> float:
-    position = get_current_position(db, portfolio_id, asset_id)
-
-    asset_value = 0.0
-    if position:
-        _, qty, _ = position
-        asset_value = float(qty) * latest_price
-
-    total_value = cash + asset_value
-    if total_value == 0:
-        return 0.0
-
-    return asset_value / total_value
-
+# ============================================
+# MAIN MULTI-ASSET REBALANCER
+# ============================================
 
 def main():
     db = SessionLocal()
 
     try:
         portfolio_id = 1
-        asset_id = 1  # AAPL for Phase 1
-
-        predicted_return = predict_next_return(db, asset_id)
-        latest_price = get_latest_price(db, asset_id)
         current_cash = get_portfolio_cash(db, portfolio_id)
-        current_position = get_current_position(db, portfolio_id, asset_id)
+        total_portfolio_value = compute_total_portfolio_value(db, portfolio_id, current_cash)
+        allowed_assets = get_allowed_assets_for_portfolio(db, portfolio_id)
 
-        if latest_price <= 0:
-            print("Latest price not found.")
+        if not allowed_assets:
+            print("No allowed assets found in portfolio_assets.")
             return
 
-        action, fraction = decide_action(predicted_return)
+        predictions = []
 
-        current_weight = compute_current_weight(
-            db=db,
-            portfolio_id=portfolio_id,
-            asset_id=asset_id,
-            latest_price=latest_price,
-            cash=current_cash,
-        )
+        # Predict all allowed assets
+        for asset_id, symbol in allowed_assets:
+            try:
+                predicted_return = predict_next_return(db, asset_id)
+                latest_price = get_latest_price(db, asset_id)
 
-        # Create a portfolio run
+                predictions.append({
+                    "asset_id": asset_id,
+                    "symbol": symbol,
+                    "predicted_return": predicted_return,
+                    "price": latest_price,
+                })
+            except Exception as e:
+                print(f"Skipping {symbol}: {e}")
+
+        if not predictions:
+            print("No predictions generated.")
+            return
+
+        # Compute dynamic investment fraction
+        invest_fraction = compute_invest_fraction(predictions)
+
+        # Compute target weights using dynamic allocation
+        target_weights = compute_target_weights(predictions, invest_fraction=invest_fraction)
+        
+        # Create one portfolio run for this rebalance
         portfolio_run_id = create_portfolio_run(
             db=db,
             portfolio_id=portfolio_id,
             run_type="rebalance",
-            notes=f"Predicted return={predicted_return:.6f}, decision={action}"
+            notes="Full multi-asset buy/sell/hold rebalance"
         )
 
-        print(f"Predicted next return: {predicted_return:.6f}")
-        print(f"Latest price: {latest_price:.2f}")
-        print(f"Current cash: {current_cash:.2f}")
-        print(f"Decision: {action.upper()}")
+        print("\nPredictions:")
+        for p in predictions:
+            print(f"{p['symbol']}: {p['predicted_return']:.6f}")
 
-        if action == "buy":
-            amount_to_invest = current_cash * fraction
-            quantity = amount_to_invest / latest_price if latest_price > 0 else 0.0
-            new_cash = current_cash - amount_to_invest
+        # Small threshold to avoid tiny unnecessary trades
+        rebalance_threshold = 0.01
 
-            reason = f"Predicted return {predicted_return:.4f} > 0.01"
+        # Loop through all assets and compare current vs target
+        for p in predictions:
+            asset_id = p["asset_id"]
+            symbol = p["symbol"]
+            predicted_return = p["predicted_return"]
+            latest_price = p["price"]
 
-            # Save allocation
+            current_weight = compute_current_weight(
+                db=db,
+                portfolio_id=portfolio_id,
+                asset_id=asset_id,
+                total_portfolio_value=total_portfolio_value
+            )
+
+            target_weight = target_weights.get(asset_id, 0.0)
+            weight_diff = target_weight - current_weight
+
+            # Save the allocation row no matter what
+            reason = f"Predicted return={predicted_return:.4f}, target_weight={target_weight:.4f}"
             save_allocation(
                 db=db,
                 portfolio_run_id=portfolio_run_id,
                 portfolio_id=portfolio_id,
                 asset_id=asset_id,
-                target_weight=fraction,
+                target_weight=target_weight,
                 current_weight=current_weight,
                 reason_summary=reason,
             )
 
-            # Save trade
-            save_trade(
-                db=db,
-                portfolio_run_id=portfolio_run_id,
-                portfolio_id=portfolio_id,
-                asset_id=asset_id,
-                action="buy",
-                quantity=quantity,
-                price=latest_price,
-                amount=amount_to_invest,
-            )
+            # HOLD if target and current are already close
+            if abs(weight_diff) < rebalance_threshold:
+                print(f"HOLD {symbol} | current={current_weight:.4f}, target={target_weight:.4f}")
+                continue
 
-            # Update position
-            update_position(
-                db=db,
-                portfolio_id=portfolio_id,
-                asset_id=asset_id,
-                action="buy",
-                quantity=quantity,
-                price=latest_price,
-            )
+            # BUY if target > current
+            if weight_diff > 0:
+                amount_to_invest = weight_diff * total_portfolio_value
 
-            # Update cash
-            update_portfolio_cash(db, portfolio_id, new_cash)
+                # Never buy more than available cash
+                amount_to_invest = min(amount_to_invest, current_cash)
 
-            print(f"BUY executed: ${amount_to_invest:.2f} -> {quantity:.6f} units")
+                if amount_to_invest <= 0 or latest_price <= 0:
+                    print(f"HOLD {symbol} | insufficient cash or invalid price")
+                    continue
 
-        elif action == "sell":
-            if current_position is None:
-                print("No position to sell. Holding instead.")
+                quantity = amount_to_invest / latest_price
 
-                save_allocation(
+                save_trade(
                     db=db,
                     portfolio_run_id=portfolio_run_id,
                     portfolio_id=portfolio_id,
                     asset_id=asset_id,
-                    target_weight=0.0,
-                    current_weight=current_weight,
-                    reason_summary="Negative signal, but no existing position to sell",
+                    action="buy",
+                    quantity=quantity,
+                    price=latest_price,
+                    amount=amount_to_invest,
                 )
-                return
 
-            _, current_qty, _ = current_position
-            current_qty = float(current_qty)
+                update_position(
+                    db=db,
+                    portfolio_id=portfolio_id,
+                    asset_id=asset_id,
+                    action="buy",
+                    quantity=quantity,
+                    price=latest_price,
+                )
 
-            quantity = current_qty * fraction
-            amount_received = quantity * latest_price
-            new_cash = current_cash + amount_received
+                current_cash -= amount_to_invest
 
-            reason = f"Predicted return {predicted_return:.4f} < -0.01"
+                print(f"BUY {symbol} | amount=${amount_to_invest:.2f} | current={current_weight:.4f} -> target={target_weight:.4f}")
 
-            save_allocation(
-                db=db,
-                portfolio_run_id=portfolio_run_id,
-                portfolio_id=portfolio_id,
-                asset_id=asset_id,
-                target_weight=0.0,
-                current_weight=current_weight,
-                reason_summary=reason,
-            )
+            # SELL if target < current
+            elif weight_diff < 0:
+                position = get_current_position(db, portfolio_id, asset_id)
 
-            save_trade(
-                db=db,
-                portfolio_run_id=portfolio_run_id,
-                portfolio_id=portfolio_id,
-                asset_id=asset_id,
-                action="sell",
-                quantity=quantity,
-                price=latest_price,
-                amount=amount_received,
-            )
+                if position is None:
+                    print(f"HOLD {symbol} | no existing position to sell")
+                    continue
 
-            update_position(
-                db=db,
-                portfolio_id=portfolio_id,
-                asset_id=asset_id,
-                action="sell",
-                quantity=quantity,
-                price=latest_price,
-            )
+                _, current_qty, _ = position
+                current_qty = float(current_qty)
 
-            update_portfolio_cash(db, portfolio_id, new_cash)
+                current_asset_value = current_weight * total_portfolio_value
+                target_asset_value = target_weight * total_portfolio_value
+                amount_to_sell = current_asset_value - target_asset_value
 
-            print(f"SELL executed: {quantity:.6f} units -> ${amount_received:.2f}")
+                if amount_to_sell <= 0 or latest_price <= 0:
+                    print(f"HOLD {symbol} | nothing to sell")
+                    continue
 
-        else:
-            reason = f"Predicted return {predicted_return:.4f} within hold band"
+                quantity_to_sell = amount_to_sell / latest_price
+                quantity_to_sell = min(quantity_to_sell, current_qty)
 
-            save_allocation(
-                db=db,
-                portfolio_run_id=portfolio_run_id,
-                portfolio_id=portfolio_id,
-                asset_id=asset_id,
-                target_weight=current_weight,
-                current_weight=current_weight,
-                reason_summary=reason,
-            )
+                if quantity_to_sell <= 0:
+                    print(f"HOLD {symbol} | quantity to sell too small")
+                    continue
 
-            print("HOLD executed: no trade, portfolio unchanged")
+                actual_amount = quantity_to_sell * latest_price
+
+                save_trade(
+                    db=db,
+                    portfolio_run_id=portfolio_run_id,
+                    portfolio_id=portfolio_id,
+                    asset_id=asset_id,
+                    action="sell",
+                    quantity=quantity_to_sell,
+                    price=latest_price,
+                    amount=actual_amount,
+                )
+
+                update_position(
+                    db=db,
+                    portfolio_id=portfolio_id,
+                    asset_id=asset_id,
+                    action="sell",
+                    quantity=quantity_to_sell,
+                    price=latest_price,
+                )
+
+                current_cash += actual_amount
+
+                print(f"SELL {symbol} | amount=${actual_amount:.2f} | current={current_weight:.4f} -> target={target_weight:.4f}")
+
+        # Save final cash balance
+        update_portfolio_cash(db, portfolio_id, current_cash)
+
+        print(f"\nFinal remaining cash: ${current_cash:.2f}")
 
     finally:
         db.close()

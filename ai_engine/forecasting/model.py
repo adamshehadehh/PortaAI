@@ -190,10 +190,15 @@ def train_and_save_asset_model(asset_id: int):
 
 
 def main():
-    # Example baseline training for AAPL (asset_id=1 in your current DB)
-    asset_id = 1
-    train_and_save_asset_model(asset_id)
+    db = SessionLocal()
+    try:
+        rows = db.execute(text("SELECT id, symbol FROM assets ORDER BY id")).fetchall()
+    finally:
+        db.close()
 
+    for asset_id, symbol in rows:
+        print(f"\nTraining model for {symbol}...")
+        train_and_save_asset_model(asset_id)
 
 if __name__ == "__main__":
     main()
