@@ -52,3 +52,17 @@ Phase 1 Complete — Single-asset intelligent portfolio management
 
 \- Frontend dashboard
 
+
+
+\## Features (Phase 2)
+
+\- Multi-asset portfolio management
+
+\- Score-based asset allocation
+
+\- Dynamic cash allocation (20%–80%)
+
+\- Full buy/sell/hold rebalancing
+
+\- Portfolio tracking (positions, trades, allocations)
+
