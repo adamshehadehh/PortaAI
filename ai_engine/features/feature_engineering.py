@@ -28,6 +28,34 @@ def load_price_history_for_asset(db, asset_id: int) -> pd.DataFrame:
 
     return df
 
+def get_average_sentiment_until_date(db, asset_id: int, feature_date, limit: int = 10) -> float:
+    """
+    Compute average sentiment for an asset using only sentiment rows
+    available on or before the given feature date.
+
+    This makes sentiment time-dependent instead of static.
+    """
+    row = db.execute(
+        text("""
+            SELECT AVG(sentiment_score)
+            FROM (
+                SELECT s.sentiment_score
+                FROM sentiment_scores s
+                JOIN news n ON s.news_id = n.id
+                WHERE s.asset_id = :asset_id
+                  AND n.published_at::date <= :feature_date
+                ORDER BY n.published_at DESC
+                LIMIT :limit
+            ) recent_scores
+        """),
+        {
+            "asset_id": asset_id,
+            "feature_date": feature_date,
+            "limit": limit,
+        }
+    ).fetchone()
+
+    return float(row[0]) if row and row[0] is not None else 0.0
 
 # Compute technical and statistical features from raw price data
 def compute_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -62,9 +90,34 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
 
     rs = avg_gain / avg_loss
     feature_df["rsi_14"] = 100 - (100 / (1 + rs))
-
+    # We will fill this later using date-aware sentiment lookup
+    feature_df["sentiment_aggregate"] = 0.0
     return feature_df
 
+def attach_time_dependent_sentiment(db, asset_id: int, feature_df: pd.DataFrame, limit: int = 10) -> pd.DataFrame:
+    """
+    For each feature row date, attach the average sentiment available
+    up to that date.
+    """
+    if feature_df.empty:
+        return feature_df
+
+    sentiment_values = []
+
+    for _, row in feature_df.iterrows():
+        feature_date = row["date"].date()
+
+        avg_sentiment = get_average_sentiment_until_date(
+            db=db,
+            asset_id=asset_id,
+            feature_date=feature_date,
+            limit=limit
+        )
+
+        sentiment_values.append(avg_sentiment)
+
+    feature_df["sentiment_aggregate"] = sentiment_values
+    return feature_df
 
 # Insert computed features into DB, skipping duplicates
 def insert_engineered_features(db, asset_id: int, df: pd.DataFrame) -> int:
@@ -90,11 +143,11 @@ def insert_engineered_features(db, asset_id: int, df: pd.DataFrame) -> int:
             text("""
                 INSERT INTO engineered_features (
                     asset_id, date, return_1d, return_7d, volatility_7d,
-                    ma_7, ma_30, momentum_7d, rsi_14
+                    ma_7, ma_30, momentum_7d, rsi_14, sentiment_aggregate
                 )
                 VALUES (
                     :asset_id, :date, :return_1d, :return_7d, :volatility_7d,
-                    :ma_7, :ma_30, :momentum_7d, :rsi_14
+                    :ma_7, :ma_30, :momentum_7d, :rsi_14, :sentiment_aggregate
                 )
             """),
             {
@@ -107,6 +160,7 @@ def insert_engineered_features(db, asset_id: int, df: pd.DataFrame) -> int:
                 "ma_30": None if pd.isna(row["ma_30"]) else float(row["ma_30"]),
                 "momentum_7d": None if pd.isna(row["momentum_7d"]) else float(row["momentum_7d"]),
                 "rsi_14": None if pd.isna(row["rsi_14"]) else float(row["rsi_14"]),
+                "sentiment_aggregate": None if pd.isna(row["sentiment_aggregate"]) else float(row["sentiment_aggregate"]),
             }
         )
         inserted += 1
@@ -139,7 +193,16 @@ def main():
                 print(f"No price history found for {symbol}")
                 continue
 
+            # Compute technical features first
             feature_df = compute_features(price_df)
+
+            # Attach date-aware sentiment feature
+            feature_df = attach_time_dependent_sentiment(db, asset_id, feature_df, limit=10)
+
+            # Optional preview print of latest sentiment value
+            latest_sentiment = feature_df["sentiment_aggregate"].iloc[-1] if not feature_df.empty else 0.0
+            print(f"Latest time-dependent sentiment for {symbol}: {latest_sentiment:.4f}")
+            
             inserted = insert_engineered_features(db, asset_id, feature_df)
 
             total_inserted += inserted

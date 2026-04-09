@@ -2,7 +2,7 @@ import os
 import joblib
 import pandas as pd
 from sqlalchemy import text
-from sklearn.ensemble import RandomForestRegressor
+from xgboost import XGBRegressor
 from sklearn.metrics import mean_squared_error
 
 from ai_engine.data.db_client import SessionLocal
@@ -15,13 +15,14 @@ def load_dataset(db, asset_id: int) -> pd.DataFrame:
     query = text("""
         SELECT 
             ef.date,
-            ef.return_1d,
+             ef.return_1d,
             ef.return_7d,
             ef.volatility_7d,
             ef.ma_7,
             ef.ma_30,
             ef.momentum_7d,
             ef.rsi_14,
+            ef.sentiment_aggregate,
             ph.close
         FROM engineered_features ef
         JOIN price_history ph 
@@ -36,8 +37,9 @@ def load_dataset(db, asset_id: int) -> pd.DataFrame:
         return pd.DataFrame()
 
     df = pd.DataFrame(rows, columns=[
-        "date", "return_1d", "return_7d", "volatility_7d",
-        "ma_7", "ma_30", "momentum_7d", "rsi_14", "close"
+    "date", "return_1d", "return_7d", "volatility_7d",
+    "ma_7", "ma_30", "momentum_7d", "rsi_14",
+    "sentiment_aggregate", "close"
     ])
 
     df["date"] = pd.to_datetime(df["date"])
@@ -94,26 +96,36 @@ def get_feature_columns():
         "ma_30",
         "momentum_7d",
         "rsi_14",
+        "sentiment_aggregate",
     ]
 
-
 def train_model(train: pd.DataFrame):
+    """
+    Train an XGBoost regression model using the engineered features.
+
+    XGBoost is well-suited for tabular financial data because it can
+    capture nonlinear interactions between technical indicators and sentiment.
+    """
     features = get_feature_columns()
 
     X_train = train[features]
     y_train = train["target"]
 
-    # Reduced-complexity model to improve generalization
-    model = RandomForestRegressor(
-        n_estimators=50,
-        max_depth=5,
-        min_samples_split=10,
-        random_state=42
+    # XGBoost configuration chosen to balance power and generalization
+    model = XGBRegressor(
+        n_estimators=200,       # number of boosting trees
+        max_depth=4,            # controls tree complexity
+        learning_rate=0.05,     # smaller learning rate = more stable learning
+        subsample=0.8,          # use random subset of rows per tree
+        colsample_bytree=0.8,   # use random subset of features per tree
+        reg_alpha=0.1,          # L1 regularization
+        reg_lambda=1.0,         # L2 regularization
+        random_state=42,
+        objective="reg:squarederror"
     )
 
     model.fit(X_train, y_train)
     return model
-
 
 def build_training_pipeline(db, asset_id: int):
     df = load_dataset(db, asset_id)

@@ -15,18 +15,19 @@ def load_latest_features(db, asset_id: int):
     These are used as inputs to the trained forecasting model.
     """
     query = text("""
-        SELECT 
-            return_1d,
-            return_7d,
-            volatility_7d,
-            ma_7,
-            ma_30,
-            momentum_7d,
-            rsi_14
-        FROM engineered_features
-        WHERE asset_id = :asset_id
-        ORDER BY date DESC
-        LIMIT 1
+    SELECT 
+        return_1d,
+        return_7d,
+        volatility_7d,
+        ma_7,
+        ma_30,
+        momentum_7d,
+        rsi_14,
+        sentiment_aggregate
+    FROM engineered_features
+    WHERE asset_id = :asset_id
+    ORDER BY date DESC
+    LIMIT 1
     """)
     return db.execute(query, {"asset_id": asset_id}).fetchone()
 
@@ -65,7 +66,32 @@ def get_allowed_assets_for_portfolio(db, portfolio_id: int):
     ).fetchall()
 
     return rows
+def get_recent_average_sentiment(db, asset_id: int, limit: int = 10) -> float:
+    """
+    Compute the average sentiment score from the most recent news items
+    for a given asset.
 
+    We use only the latest N sentiment rows so the signal reflects
+    recent market/news mood instead of very old headlines.
+    """
+    row = db.execute(
+        text("""
+            SELECT AVG(sentiment_score)
+            FROM (
+                SELECT sentiment_score
+                FROM sentiment_scores
+                WHERE asset_id = :asset_id
+                ORDER BY created_at DESC
+                LIMIT :limit
+            ) recent_scores
+        """),
+        {
+            "asset_id": asset_id,
+            "limit": limit,
+        }
+    ).fetchone()
+
+    return float(row[0]) if row and row[0] is not None else 0.0
 
 # ============================================
 # PORTFOLIO STATE
@@ -356,50 +382,51 @@ def predict_next_return(db, asset_id: int) -> float:
         return 0.0
 
     X_latest = pd.DataFrame([{
-        "return_1d": float(latest_row[0]) if latest_row[0] is not None else 0.0,
-        "return_7d": float(latest_row[1]) if latest_row[1] is not None else 0.0,
-        "volatility_7d": float(latest_row[2]) if latest_row[2] is not None else 0.0,
-        "ma_7": float(latest_row[3]) if latest_row[3] is not None else 0.0,
-        "ma_30": float(latest_row[4]) if latest_row[4] is not None else 0.0,
-        "momentum_7d": float(latest_row[5]) if latest_row[5] is not None else 0.0,
-        "rsi_14": float(latest_row[6]) if latest_row[6] is not None else 0.0,
+    "return_1d": float(latest_row[0]) if latest_row[0] is not None else 0.0,
+    "return_7d": float(latest_row[1]) if latest_row[1] is not None else 0.0,
+    "volatility_7d": float(latest_row[2]) if latest_row[2] is not None else 0.0,
+    "ma_7": float(latest_row[3]) if latest_row[3] is not None else 0.0,
+    "ma_30": float(latest_row[4]) if latest_row[4] is not None else 0.0,
+    "momentum_7d": float(latest_row[5]) if latest_row[5] is not None else 0.0,
+    "rsi_14": float(latest_row[6]) if latest_row[6] is not None else 0.0,
+    "sentiment_aggregate": float(latest_row[7]) if latest_row[7] is not None else 0.0,
     }])
 
     prediction = model.predict(X_latest[features])[0]
     return float(prediction)
+def compute_final_asset_score(predicted_return: float, avg_sentiment: float, sentiment_weight: float = 0.002) -> float:
+    """
+    Combine quantitative forecast with sentiment signal.
 
+    The sentiment weight is kept small so sentiment influences the score
+    without overpowering the forecasting model.
+    """
+    return predicted_return + (sentiment_weight * avg_sentiment)
 # ============================================
 # 🔹 CONFIDENCE → CASH ALLOCATION
 # ============================================
 
 def compute_invest_fraction(predictions):
     """
-    Compute how much of the portfolio to invest based on model confidence.
+    Compute how much of the portfolio to invest based on confidence.
 
-    Confidence is estimated using the average positive predicted return.
-    Higher confidence → invest more
-    Lower confidence → keep more cash
+    We now use final_score (prediction + sentiment) instead of only
+    predicted_return.
     """
-
-    # Keep only positive predictions
-    positive = [p["predicted_return"] for p in predictions if p["predicted_return"] > 0]
+    positive = [p["final_score"] for p in predictions if p["final_score"] > 0]
 
     if not positive:
-        # No opportunities → stay mostly in cash
         return 0.2
 
     avg_confidence = sum(positive) / len(positive)
 
-    # Scale confidence → investment fraction
-    # (tuned so typical values stay in a reasonable range)
     scale = 100
-
     invest_fraction = avg_confidence * scale
 
-    # Clamp between 20% and 80%
+    # Keep portfolio exposure between 20% and 80%
     invest_fraction = max(0.2, min(0.8, invest_fraction))
 
-    print(f"\nConfidence: {avg_confidence:.6f}")
+    print(f"\nConfidence (from final scores): {avg_confidence:.6f}")
     print(f"Dynamic invest fraction: {invest_fraction:.2f}")
 
     return invest_fraction
@@ -410,19 +437,17 @@ def compute_invest_fraction(predictions):
 
 def compute_target_weights(predictions, invest_fraction):
     """
-    Convert positive prediction scores into target weights.
+    Convert positive final scores into target portfolio weights.
 
-    Example:
-    - if total invest_fraction is 60%
-    - and one asset has a stronger positive score than another,
-      it receives a larger share of that 60%.
+    We now use final_score instead of raw predicted_return so that
+    both forecasting and sentiment influence allocation.
     """
-    positive_assets = [p for p in predictions if p["predicted_return"] > 0]
+    positive_assets = [p for p in predictions if p["final_score"] > 0]
 
     if not positive_assets:
         return {}
 
-    total_positive_score = sum(p["predicted_return"] for p in positive_assets)
+    total_positive_score = sum(p["final_score"] for p in positive_assets)
 
     if total_positive_score <= 0:
         return {}
@@ -430,8 +455,7 @@ def compute_target_weights(predictions, invest_fraction):
     target_weights = {}
 
     for p in positive_assets:
-        # Normalize positive scores, then scale by invest_fraction
-        normalized_score = p["predicted_return"] / total_positive_score
+        normalized_score = p["final_score"] / total_positive_score
         target_weights[p["asset_id"]] = normalized_score * invest_fraction
 
     return target_weights
@@ -456,21 +480,32 @@ def main():
 
         predictions = []
 
-        # Predict all allowed assets
+       # Predict all allowed assets and combine with recent sentiment
         for asset_id, symbol in allowed_assets:
             try:
                 predicted_return = predict_next_return(db, asset_id)
                 latest_price = get_latest_price(db, asset_id)
 
+                # Load recent average sentiment for this asset
+                avg_sentiment = get_recent_average_sentiment(db, asset_id, limit=10)
+
+                # Combine quantitative prediction with sentiment
+                final_score = compute_final_asset_score(
+                    predicted_return=predicted_return,
+                    avg_sentiment=avg_sentiment,
+                    sentiment_weight=0.002
+                )
+
                 predictions.append({
                     "asset_id": asset_id,
                     "symbol": symbol,
                     "predicted_return": predicted_return,
+                    "avg_sentiment": avg_sentiment,
+                    "final_score": final_score,
                     "price": latest_price,
                 })
             except Exception as e:
                 print(f"Skipping {symbol}: {e}")
-
         if not predictions:
             print("No predictions generated.")
             return
@@ -489,10 +524,15 @@ def main():
             notes="Full multi-asset buy/sell/hold rebalance"
         )
 
-        print("\nPredictions:")
+        print("\nPredictions + Sentiment:")
         for p in predictions:
-            print(f"{p['symbol']}: {p['predicted_return']:.6f}")
-
+            print(
+                f"{p['symbol']}: "
+                f"pred={p['predicted_return']:.6f}, "
+                f"sent={p['avg_sentiment']:.4f}, "
+                f"final={p['final_score']:.6f}"
+            )
+                
         # Small threshold to avoid tiny unnecessary trades
         rebalance_threshold = 0.01
 
@@ -514,7 +554,15 @@ def main():
             weight_diff = target_weight - current_weight
 
             # Save the allocation row no matter what
-            reason = f"Predicted return={predicted_return:.4f}, target_weight={target_weight:.4f}"
+            avg_sentiment = p["avg_sentiment"]
+            final_score = p["final_score"]
+
+            reason = (
+                f"predicted_return={predicted_return:.4f}, "
+                f"avg_sentiment={avg_sentiment:.4f}, "
+                f"final_score={final_score:.4f}, "
+                f"target_weight={target_weight:.4f}"
+            )
             save_allocation(
                 db=db,
                 portfolio_run_id=portfolio_run_id,

@@ -66,3 +66,125 @@ Phase 1 Complete — Single-asset intelligent portfolio management
 
 \- Portfolio tracking (positions, trades, allocations)
 
+
+
+\---
+
+
+
+🚀 Latest Progress (Phase 3 — Sentiment \& Model Upgrade)
+
+🧠 Sentiment Analysis Integration
+
+Integrated FinBERT (Transformer-based model) for financial sentiment analysis
+
+Implemented news ingestion pipeline using Yahoo Finance
+
+Stored news and sentiment scores in PostgreSQL
+
+Each headline is classified as positive / negative / neutral with a confidence score
+
+
+
+\---
+
+
+
+📊 Time-Dependent Sentiment Features
+
+Designed and implemented time-aware sentiment aggregation
+
+For each asset and date, sentiment is computed using:
+
+recent news prior to that date
+
+Added sentiment\_aggregate to engineered features
+
+Enables the model to learn how changing sentiment impacts future returns
+
+
+
+\---
+
+
+
+🤖 Forecasting Model Upgrade (XGBoost)
+
+Replaced baseline model with XGBoost Regressor
+
+Improved ability to capture:
+
+nonlinear relationships
+
+interactions between technical indicators and sentiment
+
+Observed improved performance on some assets (e.g., AAPL)
+
+
+
+\---
+
+
+
+📈 Decision Engine Improvements
+
+Integrated sentiment into:
+
+forecasting features
+
+decision scoring (final\_score)
+
+Implemented:
+
+multi-asset allocation
+
+score-based weighting
+
+dynamic cash allocation (20%–80%)
+
+full buy / sell / hold logic
+
+
+
+\---
+
+
+
+⚙️ Current System Capabilities
+
+Combines:
+
+quantitative signals (technical indicators)
+
+machine learning forecasts (XGBoost)
+
+NLP sentiment analysis (FinBERT)
+
+Produces:
+
+portfolio allocations
+
+trade decisions
+
+capital rebalancing
+
+
+
+\---
+
+
+
+📍 Project Status
+
+Core AI system is \~90% complete
+
+
+
+Next steps:
+
+Model explainability (feature importance / SHAP)
+
+Frontend dashboard
+
+Automation (daily updates \& rebalancing)
+

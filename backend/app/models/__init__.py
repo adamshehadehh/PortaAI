@@ -8,3 +8,5 @@ from app.models.portfolio_run import PortfolioRun
 from app.models.allocation import Allocation
 from app.models.trade import Trade
 from app.models.portfolio_position import PortfolioPosition
+from app.models.news import News
+from app.models.sentiment_score import SentimentScore
