@@ -1,6 +1,6 @@
 import pandas as pd
 from sqlalchemy import text
-
+import shap
 from ai_engine.data.db_client import SessionLocal
 from ai_engine.forecasting.model import load_saved_model
 
@@ -394,6 +394,63 @@ def predict_next_return(db, asset_id: int) -> float:
 
     prediction = model.predict(X_latest[features])[0]
     return float(prediction)
+
+def get_top_shap_reasons(db, asset_id: int, top_n: int = 3):
+    """
+    Explain the latest model prediction for one asset using SHAP.
+
+    Returns the top N most important feature contributions sorted by absolute impact.
+    """
+    saved = load_saved_model(asset_id)
+    model = saved["model"]
+    features = saved["features"]
+
+    latest_row = load_latest_features(db, asset_id)
+    if latest_row is None:
+        return []
+
+    # Build latest feature frame using the same structure used at inference time
+    X_latest = pd.DataFrame([{
+        "return_1d": float(latest_row[0]) if latest_row[0] is not None else 0.0,
+        "return_7d": float(latest_row[1]) if latest_row[1] is not None else 0.0,
+        "volatility_7d": float(latest_row[2]) if latest_row[2] is not None else 0.0,
+        "ma_7": float(latest_row[3]) if latest_row[3] is not None else 0.0,
+        "ma_30": float(latest_row[4]) if latest_row[4] is not None else 0.0,
+        "momentum_7d": float(latest_row[5]) if latest_row[5] is not None else 0.0,
+        "rsi_14": float(latest_row[6]) if latest_row[6] is not None else 0.0,
+        "sentiment_aggregate": float(latest_row[7]) if latest_row[7] is not None else 0.0,
+    }])
+
+    X_latest = X_latest[features]
+
+    # Use TreeExplainer for XGBoost
+    explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(X_latest)
+
+    contributions = []
+    for i, feature_name in enumerate(features):
+        feature_value = float(X_latest.iloc[0][feature_name])
+        feature_shap = float(shap_values[0][i])
+
+        if feature_shap > 0:
+            direction = "pushes UP"
+        elif feature_shap < 0:
+            direction = "pushes DOWN"
+        else:
+            direction = "has NO EFFECT"
+
+        contributions.append({
+            "feature": feature_name,
+            "value": feature_value,
+            "shap": feature_shap,
+            "direction": direction,
+        })
+
+    # Sort by absolute importance
+    contributions.sort(key=lambda x: abs(x["shap"]), reverse=True)
+
+    return contributions[:top_n]
+    
 def compute_final_asset_score(predicted_return: float, avg_sentiment: float, sentiment_weight: float = 0.002) -> float:
     """
     Combine quantitative forecast with sentiment signal.
@@ -542,7 +599,7 @@ def main():
             symbol = p["symbol"]
             predicted_return = p["predicted_return"]
             latest_price = p["price"]
-
+            top_reasons = get_top_shap_reasons(db, asset_id, top_n=3)
             current_weight = compute_current_weight(
                 db=db,
                 portfolio_id=portfolio_id,
@@ -576,6 +633,13 @@ def main():
             # HOLD if target and current are already close
             if abs(weight_diff) < rebalance_threshold:
                 print(f"HOLD {symbol} | current={current_weight:.4f}, target={target_weight:.4f}")
+                print("Top reasons:")
+                for reason_item in top_reasons:
+                    print(
+                        f"  - {reason_item['feature']}: "
+                        f"value={reason_item['value']:.6f}, "
+                        f"shap={reason_item['shap']:.6f} -> {reason_item['direction']}"
+                    )
                 continue
 
             # BUY if target > current
@@ -614,7 +678,13 @@ def main():
                 current_cash -= amount_to_invest
 
                 print(f"BUY {symbol} | amount=${amount_to_invest:.2f} | current={current_weight:.4f} -> target={target_weight:.4f}")
-
+                print("Top reasons:")
+                for reason_item in top_reasons:
+                    print(
+                        f"  - {reason_item['feature']}: "
+                        f"value={reason_item['value']:.6f}, "
+                        f"shap={reason_item['shap']:.6f} -> {reason_item['direction']}"
+                    )
             # SELL if target < current
             elif weight_diff < 0:
                 position = get_current_position(db, portfolio_id, asset_id)
@@ -666,7 +736,13 @@ def main():
                 current_cash += actual_amount
 
                 print(f"SELL {symbol} | amount=${actual_amount:.2f} | current={current_weight:.4f} -> target={target_weight:.4f}")
-
+                print("Top reasons:")
+                for reason_item in top_reasons:
+                    print(
+                        f"  - {reason_item['feature']}: "
+                        f"value={reason_item['value']:.6f}, "
+                        f"shap={reason_item['shap']:.6f} -> {reason_item['direction']}"
+                    )
         # Save final cash balance
         update_portfolio_cash(db, portfolio_id, current_cash)
 

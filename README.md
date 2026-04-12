@@ -188,3 +188,66 @@ Frontend dashboard
 
 Automation (daily updates \& rebalancing)
 
+---
+
+## 🔍 Explainability (SHAP Integration)
+
+To enhance transparency and interpretability, the system integrates **SHAP (SHapley Additive exPlanations)** to explain model predictions.
+
+### Key Features
+- Uses **TreeExplainer** for XGBoost models
+- Explains each asset’s predicted return based on feature contributions
+- Identifies which features push predictions **up or down**
+
+### Example Explanation
+For each asset, the system prints:
+
+- Top 3 most influential features
+- Full feature contribution breakdown
+
+Example:BUY MSFT
+Top reasons:
+
+momentum_7d → pushes UP
+return_7d → pushes UP
+sentiment_aggregate → pushes UP
+
+
+### Purpose
+- Improves model transparency
+- Provides insight into AI decision-making
+- Strengthens trust and interpretability of portfolio actions
+
+---
+
+## 📊 System Capabilities Summary
+
+The system now combines:
+
+- **Quantitative Analysis**
+  - Technical indicators (returns, RSI, momentum, volatility)
+
+- **Machine Learning**
+  - XGBoost forecasting model
+
+- **Natural Language Processing**
+  - FinBERT sentiment analysis on financial news
+
+- **Explainability**
+  - SHAP-based feature importance per prediction
+
+- **Portfolio Optimization**
+  - Multi-asset allocation
+  - Dynamic cash allocation (20%–80%)
+  - Buy / Sell / Hold decision engine
+
+---
+
+## 📍 Current Status
+
+Core AI system is **fully implemented (~95%)**
+
+Remaining work focuses on:
+- Frontend dashboard
+- Automation (scheduled runs / rebalancing)
+- Final presentation and polishing
