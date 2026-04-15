@@ -8,24 +8,41 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { apiFetch } from "@/lib/api"
+import { useEffect, useState } from "react"
 
-import { predictions } from "@/data/mockData"
+type Prediction = {
+  symbol: string
+  predicted_return: number
+  sentiment: number
+  final_score: number
+  action: string
+}
+
+type PredictionsResponse = {
+  portfolio_id: number
+  predictions: Prediction[]
+}
 
 function ActionBadge({ action }: { action: string }) {
   if (action === "BUY") {
-    return <Badge className="rounded-full">BUY</Badge>
+    return (
+      <Badge className="rounded-full bg-emerald-600 hover:bg-emerald-700">
+        BUY
+      </Badge>
+    )
   }
 
   if (action === "SELL") {
     return (
-      <Badge variant="destructive" className="rounded-full">
+      <Badge className="rounded-full bg-red-600 hover:bg-red-700">
         SELL
       </Badge>
     )
   }
 
   return (
-    <Badge variant="secondary" className="rounded-full">
+    <Badge className="rounded-full bg-slate-200 text-slate-700 hover:bg-slate-200">
       HOLD
     </Badge>
   )
@@ -36,7 +53,66 @@ function formatSigned(value: number, digits = 6) {
   return value > 0 ? `+${formatted}` : formatted
 }
 
+function valueColor(value: number) {
+  if (value > 0) return "text-emerald-600 font-medium"
+  if (value < 0) return "text-red-600 font-medium"
+  return "text-slate-600"
+}
+
 export default function Predictions() {
+  const [predictions, setPredictions] = useState<Prediction[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    async function fetchPredictions(showLoading = false) {
+      try {
+        if (showLoading) {
+          setLoading(true)
+        }
+
+        setError(null)
+
+        const response = await apiFetch("http://127.0.0.1:8000/api/dashboard/predictions")
+
+        if (!response.ok) {
+          throw new Error("Failed to fetch predictions")
+        }
+
+        const data: PredictionsResponse = await response.json()
+
+        setPredictions((prev) => {
+          const prevJson = JSON.stringify(prev)
+          const nextJson = JSON.stringify(data.predictions)
+          return prevJson !== nextJson ? data.predictions : prev
+        })
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Unknown error")
+      } finally {
+        if (showLoading) {
+          setLoading(false)
+        }
+      }
+    }
+
+    fetchPredictions(true)
+
+    const handlePortfolioUpdate = () => {
+      fetchPredictions(false)
+    }
+
+    window.addEventListener("portfolio-data-updated", handlePortfolioUpdate)
+
+    const intervalId = window.setInterval(() => {
+      fetchPredictions(false)
+    }, 10000)
+
+    return () => {
+      window.removeEventListener("portfolio-data-updated", handlePortfolioUpdate)
+      window.clearInterval(intervalId)
+    }
+  }, [])
+
   return (
     <div className="space-y-6">
       <header className="space-y-2">
@@ -53,35 +129,59 @@ export default function Predictions() {
         </p>
       </header>
 
+      {error && (
+        <Card className="rounded-2xl border-red-200 shadow-sm">
+          <CardContent className="pt-6">
+            <p className="font-medium text-red-600">Error: {error}</p>
+          </CardContent>
+        </Card>
+      )}
+
       <Card className="rounded-2xl border-slate-200 shadow-sm">
         <CardHeader>
           <CardTitle>Latest Asset Predictions</CardTitle>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Asset</TableHead>
-                <TableHead>Predicted Return</TableHead>
-                <TableHead>Sentiment</TableHead>
-                <TableHead>Final Score</TableHead>
-                <TableHead>Suggested Action</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {predictions.map((prediction) => (
-                <TableRow key={prediction.symbol}>
-                  <TableCell className="font-medium">{prediction.symbol}</TableCell>
-                  <TableCell>{formatSigned(prediction.predictedReturn, 6)}</TableCell>
-                  <TableCell>{formatSigned(prediction.sentiment, 4)}</TableCell>
-                  <TableCell>{formatSigned(prediction.finalScore, 6)}</TableCell>
-                  <TableCell>
-                    <ActionBadge action={prediction.action} />
-                  </TableCell>
+          {loading ? (
+            <p className="text-slate-600">Loading predictions...</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Asset</TableHead>
+                  <TableHead>Predicted Return</TableHead>
+                  <TableHead>Sentiment</TableHead>
+                  <TableHead>Final Score</TableHead>
+                  <TableHead>Suggested Action</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {predictions.map((prediction) => (
+                  <TableRow key={prediction.symbol}>
+                    <TableCell className="font-medium text-slate-900">
+                      {prediction.symbol}
+                    </TableCell>
+
+                    <TableCell className={valueColor(prediction.predicted_return)}>
+                      {formatSigned(prediction.predicted_return, 6)}
+                    </TableCell>
+
+                    <TableCell className={valueColor(prediction.sentiment)}>
+                      {formatSigned(prediction.sentiment, 4)}
+                    </TableCell>
+
+                    <TableCell className={valueColor(prediction.final_score)}>
+                      {formatSigned(prediction.final_score, 6)}
+                    </TableCell>
+
+                    <TableCell>
+                      <ActionBadge action={prediction.action} />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
 
@@ -89,11 +189,13 @@ export default function Predictions() {
         <CardHeader>
           <CardTitle>Prediction Summary</CardTitle>
         </CardHeader>
-        <CardContent>
-          <p className="text-slate-600">
+        <CardContent className="space-y-3 text-slate-600">
+          <p>
             PortaAI combines XGBoost forecasting with transformer-based financial
-            sentiment analysis to generate a final score for each asset. These
-            scores are then used by the decision engine to determine portfolio
+            sentiment analysis to generate a final score for each asset.
+          </p>
+          <p>
+            These scores are then used by the decision engine to determine
             allocation and buy / sell / hold actions.
           </p>
         </CardContent>

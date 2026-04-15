@@ -1,6 +1,7 @@
 import { NavLink } from "react-router-dom"
 import {
   BarChart3,
+  Bell,
   Briefcase,
   BrainCircuit,
   House,
@@ -14,6 +15,7 @@ const navItems = [
   { to: "/app/predictions", label: "Predictions", icon: TrendingUp },
   { to: "/app/trades", label: "Trades", icon: BarChart3 },
   { to: "/app/explainability", label: "Explainability", icon: BrainCircuit },
+  { to: "/app/notifications", label: "Notifications", icon: Bell },
   { to: "/app/settings", label: "Settings", icon: Settings },
 ]
 

@@ -3,7 +3,7 @@ from sqlalchemy import text
 import shap
 from ai_engine.data.db_client import SessionLocal
 from ai_engine.forecasting.model import load_saved_model
-
+from ai_engine.services.notifications import create_notification, get_portfolio_user_id
 
 # ============================================
 # DATA LOADING
@@ -522,11 +522,11 @@ def compute_target_weights(predictions, invest_fraction):
 # MAIN MULTI-ASSET REBALANCER
 # ============================================
 
-def main():
+def main(portfolio_id: int):
     db = SessionLocal()
 
     try:
-        portfolio_id = 1
+        user_id = get_portfolio_user_id(db, portfolio_id)
         current_cash = get_portfolio_cash(db, portfolio_id)
         total_portfolio_value = compute_total_portfolio_value(db, portfolio_id, current_cash)
         allowed_assets = get_allowed_assets_for_portfolio(db, portfolio_id)
@@ -676,7 +676,15 @@ def main():
                 )
 
                 current_cash -= amount_to_invest
-
+                if user_id is not None:
+                    create_notification(
+                        db=db,
+                        user_id=user_id,
+                        portfolio_id=portfolio_id,
+                        title="Buy Signal Executed",
+                        message=f"A BUY trade was executed for {symbol} worth ${amount_to_invest:.2f}.",
+                    )
+                    db.commit()
                 print(f"BUY {symbol} | amount=${amount_to_invest:.2f} | current={current_weight:.4f} -> target={target_weight:.4f}")
                 print("Top reasons:")
                 for reason_item in top_reasons:
@@ -734,7 +742,15 @@ def main():
                 )
 
                 current_cash += actual_amount
-
+                if user_id is not None:
+                    create_notification(
+                        db=db,
+                        user_id=user_id,
+                        portfolio_id=portfolio_id,
+                        title="Sell Signal Executed",
+                        message=f"A SELL trade was executed for {symbol} worth ${actual_amount:.2f}.",
+                    )
+                    db.commit()
                 print(f"SELL {symbol} | amount=${actual_amount:.2f} | current={current_weight:.4f} -> target={target_weight:.4f}")
                 print("Top reasons:")
                 for reason_item in top_reasons:
@@ -745,7 +761,15 @@ def main():
                     )
         # Save final cash balance
         update_portfolio_cash(db, portfolio_id, current_cash)
-
+        if user_id is not None:
+            create_notification(
+                db=db,
+                user_id=user_id,
+                portfolio_id=portfolio_id,
+                title="Portfolio Rebalanced",
+                message="PortaAI completed a rebalance cycle successfully.",
+            )
+            db.commit()
         print(f"\nFinal remaining cash: ${current_cash:.2f}")
 
     finally:
@@ -753,4 +777,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main(portfolio_id=1)

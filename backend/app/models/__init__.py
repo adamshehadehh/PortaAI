@@ -10,3 +10,4 @@ from app.models.trade import Trade
 from app.models.portfolio_position import PortfolioPosition
 from app.models.news import News
 from app.models.sentiment_score import SentimentScore
+from app.models.notification import Notification
