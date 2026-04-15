@@ -10,7 +10,7 @@ env/
 
 # Environment variables
 .env
-
+.env*
 # Models (optional but recommended to ignore)
 ai_engine/forecasting/saved_models/
 

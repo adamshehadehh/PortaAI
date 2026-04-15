@@ -243,11 +243,65 @@ The system now combines:
 
 ---
 
-## 📍 Current Status
+## 🔄 Latest Update (Frontend Integration, Auth & Notifications)
+### 🔐 Authentication System
+- Implemented JWT-based login system
+- Added password hashing using bcrypt
+- Protected backend routes using token-based authentication
+- Created frontend protected routes for `/app/*`
+- Integrated token storage and automatic attachment to API requests
+- Implemented automatic logout on `401 Unauthorized`
 
-Core AI system is **fully implemented (~95%)**
+---
 
-Remaining work focuses on:
-- Frontend dashboard
-- Automation (scheduled runs / rebalancing)
-- Final presentation and polishing
+### 🔗 Frontend ↔ Backend Integration
+- Connected all frontend pages to FastAPI backend:
+  - Dashboard
+  - Positions
+  - Predictions
+  - Trades
+  - Explainability
+- Replaced static data with live API data
+
+---
+
+### 🔔 Notifications System
+- Created notifications table and backend API
+- Built frontend Notifications page
+- Added bell icon with unread count in topbar
+- Implemented:
+  - mark as read
+  - mark all as read
+  - clear read notifications
+  - confirmation dialogs
+- Integrated automatic notifications from AI decision engine:
+  - BUY trades
+  - SELL trades
+  - Portfolio rebalance events
+
+---
+
+### 🔄 Live Data Updates
+- Implemented polling-based auto-refresh across pages:
+  - Dashboard
+  - Positions
+  - Predictions
+  - Trades
+  - Explainability
+  - Notifications
+- Eliminated need for manual page refresh
+
+---
+
+### 🤖 Decision Engine Improvements
+- Refactored decision engine to accept dynamic `portfolio_id`
+- Integrated notification generation directly within buy/sell logic
+- Maintained temporary local execution entry point for testing
+
+---
+
+### 🔐 Security Improvements
+- Removed hardcoded `SECRET_KEY`
+- Moved authentication configuration to environment variables (`.env`)
+- Configured backend to securely load environment variables using `python-dotenv`
+- Updated `.gitignore` to exclude `.env` files
