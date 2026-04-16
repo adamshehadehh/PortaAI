@@ -6,7 +6,7 @@ from typing import Optional
 from dotenv import load_dotenv
 from jose import jwt
 from passlib.context import CryptContext
-
+from uuid import uuid4
 BASE_DIR = Path(__file__).resolve().parents[2]   # backend/
 load_dotenv(BASE_DIR / ".env")
 
@@ -32,6 +32,8 @@ def create_access_token(subject: str, expires_minutes: Optional[int] = None) -> 
     payload = {
         "sub": subject,
         "exp": expire,
+        "iat": datetime.now(timezone.utc),
+        "jti": str(uuid4()),
     }
 
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)

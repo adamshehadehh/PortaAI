@@ -440,70 +440,29 @@ def get_portfolio_history(
     portfolio_id: int = Depends(get_current_user_portfolio_id),
 ):
     """
-    Return a simple recent portfolio history for charting.
-    Currently based on recent portfolio runs.
+    Return real portfolio history from stored portfolio snapshots.
     """
     db = SessionLocal()
 
     try:
         rows = db.execute(
             text("""
-                SELECT started_at
-                FROM portfolio_runs
+                SELECT created_at, total_value
+                FROM portfolio_snapshots
                 WHERE portfolio_id = :portfolio_id
-                ORDER BY started_at ASC
-                LIMIT 10
+                ORDER BY created_at ASC
+                LIMIT 50
             """),
             {"portfolio_id": portfolio_id}
         ).fetchall()
 
-        portfolio_row = db.execute(
-            text("""
-                SELECT current_cash
-                FROM portfolios
-                WHERE id = :portfolio_id
-            """),
-            {"portfolio_id": portfolio_id}
-        ).fetchone()
-
-        if portfolio_row is None:
-            raise HTTPException(status_code=404, detail="Portfolio not found")
-
-        current_cash = float(portfolio_row[0])
-
-        positions = db.execute(
-            text("""
-                SELECT pp.asset_id, pp.quantity, ph.close
-                FROM portfolio_positions pp
-                JOIN LATERAL (
-                    SELECT close
-                    FROM price_history
-                    WHERE asset_id = pp.asset_id
-                    ORDER BY date DESC
-                    LIMIT 1
-                ) ph ON TRUE
-                WHERE pp.portfolio_id = :portfolio_id
-            """),
-            {"portfolio_id": portfolio_id}
-        ).fetchall()
-
-        invested_value = 0.0
-        for asset_id, quantity, latest_close in positions:
-            invested_value += float(quantity) * float(latest_close)
-
-        total_value = current_cash + invested_value
-
-        history = []
-        if rows:
-            for i, (created_at,) in enumerate(rows, start=1):
-                history.append({
-                    "label": created_at.strftime("%b %d"),
-                    "value": round(total_value, 2),
-                })
-        else:
-            history = [
-                {"label": "Now", "value": round(total_value, 2)}
-            ]
+        history = [
+            {
+                "label": created_at.strftime("%b %d %H:%M"),
+                "value": float(total_value),
+            }
+            for created_at, total_value in rows
+        ]
 
         return {
             "portfolio_id": portfolio_id,

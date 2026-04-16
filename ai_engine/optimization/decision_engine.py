@@ -4,6 +4,7 @@ import shap
 from ai_engine.data.db_client import SessionLocal
 from ai_engine.forecasting.model import load_saved_model
 from ai_engine.services.notifications import create_notification, get_portfolio_user_id
+from ai_engine.services.portfolio_snapshots import create_portfolio_snapshot
 
 # ============================================
 # DATA LOADING
@@ -761,6 +762,16 @@ def main(portfolio_id: int):
                     )
         # Save final cash balance
         update_portfolio_cash(db, portfolio_id, current_cash)
+        
+        final_total_portfolio_value = compute_total_portfolio_value(
+            db, portfolio_id, current_cash
+        )
+
+        create_portfolio_snapshot(
+            db=db,
+            portfolio_id=portfolio_id,
+            total_value=final_total_portfolio_value,
+        )
         if user_id is not None:
             create_notification(
                 db=db,

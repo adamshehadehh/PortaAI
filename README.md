@@ -305,3 +305,55 @@ The system now combines:
 - Moved authentication configuration to environment variables (`.env`)
 - Configured backend to securely load environment variables using `python-dotenv`
 - Updated `.gitignore` to exclude `.env` files
+
+## 🔄 Latest Update – Rebalancing, Pipeline Orchestration, Snapshots, and Scheduling
+
+### Portfolio Rebalance API
+- Added a protected backend rebalance endpoint
+- Integrated the decision engine with authenticated portfolio execution
+- Enabled manual rebalance triggering from the frontend through a **Rebalance Now** button
+- Verified rebalance execution using authenticated requests
+
+### Real Portfolio History with Snapshots
+- Added a `portfolio_snapshots` table for storing historical portfolio values
+- Inserted snapshots after successful rebalances
+- Added a dedicated portfolio snapshot endpoint
+- Updated `/api/dashboard/history` to use real stored snapshots instead of placeholder values
+- Improved dashboard chart labels to display time-based snapshot points correctly
+
+### Pipeline Endpoints
+Implemented backend pipeline endpoints for:
+- market data refresh
+- feature engineering refresh
+- model training
+- daily pipeline execution
+- weekly pipeline execution
+
+This allows the AI workflow to be triggered from the backend rather than manually running scripts.
+
+### Daily and Weekly Pipeline Flows
+- Added a **daily pipeline** flow that runs:
+  1. data refresh
+  2. feature refresh
+  3. model training
+  4. portfolio snapshot
+
+- Added a **weekly pipeline** flow that runs:
+  1. portfolio rebalance
+  2. rebalance snapshot generation
+
+### Scheduling and Automation
+- Integrated APScheduler into the backend
+- Added scheduled automation support for:
+  - daily pipeline jobs
+  - weekly rebalance jobs
+- Confirmed scheduled jobs can trigger the portfolio workflow automatically while the backend service is running
+
+### Frontend Integration Improvements
+- Added a frontend **Rebalance Now** button to trigger authenticated rebalancing directly from the dashboard
+- Connected the rebalance trigger to automatic UI refresh behavior through existing live-update logic
+
+### Security and Auth Improvements
+- Moved authentication configuration to environment variables
+- Removed hardcoded secret loading from source code
+- Updated JWT token creation so each login generates a unique token

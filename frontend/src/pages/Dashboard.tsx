@@ -14,7 +14,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts"
-
+import { Button } from "@/components/ui/button"
 type DashboardSummary = {
   portfolio_id: number
   total_value: number
@@ -94,7 +94,8 @@ export default function Dashboard() {
   const [history, setHistory] = useState<HistoryItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-
+  const [rebalanceLoading, setRebalanceLoading] = useState(false)
+  const [rebalanceMessage, setRebalanceMessage] = useState<string | null>(null)
   useEffect(() => {
     async function fetchDashboardData(showLoading = false) {
       try {
@@ -161,21 +162,64 @@ export default function Dashboard() {
       window.clearInterval(intervalId)
     }
   }, [])
+  async function handleRebalance() {
+    try {
+      setRebalanceLoading(true)
+      setRebalanceMessage(null)
+      setError(null)
 
+      const response = await apiFetch("http://127.0.0.1:8000/api/portfolio/rebalance", {
+        method: "POST",
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to rebalance portfolio")
+      }
+
+      const data = await response.json()
+
+      setRebalanceMessage(data.message || "Rebalance completed successfully")
+
+      window.dispatchEvent(new Event("portfolio-data-updated"))
+      window.dispatchEvent(new Event("notifications-updated"))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error")
+    } finally {
+      setRebalanceLoading(false)
+    }
+  }
   return (
     <div className="space-y-6">
-      <header className="space-y-2">
-        <div className="flex items-center gap-3">
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900">
-            Home
-          </h1>
-          <Badge variant="secondary" className="rounded-full">
-            Overview
-          </Badge>
+      <header className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="space-y-2">
+            <div className="flex items-center gap-3">
+              <h1 className="text-3xl font-bold tracking-tight text-slate-900">
+                Home
+              </h1>
+              <Badge variant="secondary" className="rounded-full">
+                Overview
+              </Badge>
+            </div>
+            <p className="text-slate-600">
+              Overview of portfolio value, allocation, and recent performance.
+            </p>
+          </div>
+
+          <Button
+            onClick={handleRebalance}
+            disabled={rebalanceLoading}
+            className="rounded-xl bg-cyan-600 hover:bg-cyan-700"
+          >
+            {rebalanceLoading ? "Rebalancing..." : "Rebalance Now"}
+          </Button>
         </div>
-        <p className="text-slate-600">
-          Overview of portfolio value, allocation, and recent performance.
-        </p>
+
+        {rebalanceMessage && (
+          <p className="text-sm font-medium text-emerald-600">
+            {rebalanceMessage}
+          </p>
+        )}
       </header>
 
       {error && (
