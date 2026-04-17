@@ -39,19 +39,26 @@ def run_daily_pipeline_job():
         db.close()
 
 
-def run_weekly_pipeline_job():
+def run_rebalance_for_frequency(frequency: str):
     db = SessionLocal()
     try:
-        print("Running weekly pipeline job...")
+        print(f"Running rebalance job for frequency={frequency}...")
 
-        portfolio_rows = db.execute(
-            text("SELECT id FROM portfolios ORDER BY id ASC")
+        rows = db.execute(
+            text("""
+                SELECT p.id
+                FROM portfolios p
+                LEFT JOIN user_settings us ON us.user_id = p.user_id
+                WHERE COALESCE(us.rebalance_frequency, 'weekly') = :frequency
+                ORDER BY p.id ASC
+            """),
+            {"frequency": frequency}
         ).fetchall()
 
-        for (portfolio_id,) in portfolio_rows:
+        for (portfolio_id,) in rows:
             run_decision_engine(portfolio_id=portfolio_id)
 
-        print("Weekly pipeline job completed.")
+        print(f"Rebalance job for frequency={frequency} completed.")
 
     finally:
         db.close()
@@ -61,7 +68,7 @@ def start_scheduler():
     if scheduler.running:
         return
 
-    # Daily at 09:00
+    # Daily pipeline every day at 09:00
     scheduler.add_job(
         run_daily_pipeline_job,
         trigger="cron",
@@ -74,14 +81,41 @@ def start_scheduler():
         misfire_grace_time=300,
     )
 
-    # Weekly on Monday at 10:00
+    # Daily rebalance users every day at 10:00
     scheduler.add_job(
-        run_weekly_pipeline_job,
+        lambda: run_rebalance_for_frequency("daily"),
+        trigger="cron",
+        hour=10,
+        minute=0,
+        id="daily_rebalance_job",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=300,
+    )
+
+    # Weekly rebalance users every Monday at 10:00
+    scheduler.add_job(
+        lambda: run_rebalance_for_frequency("weekly"),
         trigger="cron",
         day_of_week="mon",
         hour=10,
         minute=0,
-        id="weekly_pipeline_job",
+        id="weekly_rebalance_job",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=300,
+    )
+
+    # Monthly rebalance users on day 1 at 10:00
+    scheduler.add_job(
+        lambda: run_rebalance_for_frequency("monthly"),
+        trigger="cron",
+        day=1,
+        hour=10,
+        minute=0,
+        id="monthly_rebalance_job",
         replace_existing=True,
         max_instances=1,
         coalesce=True,

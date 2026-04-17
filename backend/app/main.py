@@ -7,6 +7,7 @@ from app.api.notifications import router as notifications_router
 from app.api.portfolio import router as portfolio_router
 from app.api.pipeline import router as pipeline_router
 from app.services.scheduler import start_scheduler
+from app.api.settings import router as settings_router
 
 app = FastAPI(title="PortaAI API")
 
@@ -23,6 +24,7 @@ app.include_router(dashboard_router)
 app.include_router(notifications_router)
 app.include_router(portfolio_router)
 app.include_router(pipeline_router)
+app.include_router(settings_router)
 start_scheduler()
 @app.get("/")
 def root():

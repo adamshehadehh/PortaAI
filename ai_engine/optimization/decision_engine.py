@@ -5,6 +5,8 @@ from ai_engine.data.db_client import SessionLocal
 from ai_engine.forecasting.model import load_saved_model
 from ai_engine.services.notifications import create_notification, get_portfolio_user_id
 from ai_engine.services.portfolio_snapshots import create_portfolio_snapshot
+from ai_engine.services.user_settings import get_user_email_and_email_setting
+from app.services.email_service import send_email
 
 # ============================================
 # DATA LOADING
@@ -528,6 +530,7 @@ def main(portfolio_id: int):
 
     try:
         user_id = get_portfolio_user_id(db, portfolio_id)
+        executed_trades = []
         current_cash = get_portfolio_cash(db, portfolio_id)
         total_portfolio_value = compute_total_portfolio_value(db, portfolio_id, current_cash)
         allowed_assets = get_allowed_assets_for_portfolio(db, portfolio_id)
@@ -677,6 +680,11 @@ def main(portfolio_id: int):
                 )
 
                 current_cash -= amount_to_invest
+                executed_trades.append({
+                    "action": "BUY",
+                    "symbol": symbol,
+                    "amount": round(amount_to_invest, 2),
+                })
                 if user_id is not None:
                     create_notification(
                         db=db,
@@ -684,6 +692,7 @@ def main(portfolio_id: int):
                         portfolio_id=portfolio_id,
                         title="Buy Signal Executed",
                         message=f"A BUY trade was executed for {symbol} worth ${amount_to_invest:.2f}.",
+                        notification_type="trade",
                     )
                     db.commit()
                 print(f"BUY {symbol} | amount=${amount_to_invest:.2f} | current={current_weight:.4f} -> target={target_weight:.4f}")
@@ -743,6 +752,11 @@ def main(portfolio_id: int):
                 )
 
                 current_cash += actual_amount
+                executed_trades.append({
+                    "action": "SELL",
+                    "symbol": symbol,
+                    "amount": round(actual_amount, 2),
+                })
                 if user_id is not None:
                     create_notification(
                         db=db,
@@ -750,6 +764,7 @@ def main(portfolio_id: int):
                         portfolio_id=portfolio_id,
                         title="Sell Signal Executed",
                         message=f"A SELL trade was executed for {symbol} worth ${actual_amount:.2f}.",
+                        notification_type="trade",
                     )
                     db.commit()
                 print(f"SELL {symbol} | amount=${actual_amount:.2f} | current={current_weight:.4f} -> target={target_weight:.4f}")
@@ -779,10 +794,51 @@ def main(portfolio_id: int):
                 portfolio_id=portfolio_id,
                 title="Portfolio Rebalanced",
                 message="PortaAI completed a rebalance cycle successfully.",
+                notification_type="rebalance",
             )
             db.commit()
         print(f"\nFinal remaining cash: ${current_cash:.2f}")
+        if user_id is not None:
+            user_email, email_notifications_enabled = get_user_email_and_email_setting(
+                db, user_id
+            )
 
+            if email_notifications_enabled and user_email:
+
+                # Format trades
+                if executed_trades:
+                    trade_lines = "\n".join(
+                        f"  • {trade['action']} {trade['symbol']}  —  ${trade['amount']:.2f}"
+                        for trade in executed_trades
+                    )
+                else:
+                    trade_lines = "  • No trades executed (all assets held)"
+
+                email_subject = "PortaAI Rebalance Summary"
+
+                email_body = (
+                    "PortaAI Rebalance Report\n"
+                    "────────────────────────────\n\n"
+
+                    f"Portfolio ID: {portfolio_id}\n\n"
+
+                    "Executed Trades\n"
+                    f"{trade_lines}\n\n"
+
+                    "Portfolio Summary\n"
+                    f"  • Final Cash: ${current_cash:.2f}\n"
+                    f"  • Total Value: ${final_total_portfolio_value:.2f}\n\n"
+
+                    "────────────────────────────\n"
+                    "This is an automated message from PortaAI.\n"
+                    "Your portfolio has been rebalanced based on the latest market signals."
+                )
+
+                send_email(
+                    to_email=user_email,
+                    subject=email_subject,
+                    body=email_body,
+                )
     finally:
         db.close()
 
