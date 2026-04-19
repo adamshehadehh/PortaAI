@@ -161,7 +161,33 @@ def get_all_positions(db, portfolio_id: int):
     ).fetchall()
 
     return rows
+def get_all_current_positions(db, portfolio_id: int):
+    """
+    Return all current positions with positive quantity for the portfolio.
+    """
+    rows = db.execute(
+        text("""
+            SELECT
+                pp.asset_id,
+                a.symbol,
+                pp.quantity
+            FROM portfolio_positions pp
+            JOIN assets a ON a.id = pp.asset_id
+            WHERE pp.portfolio_id = :portfolio_id
+              AND pp.quantity > 0
+            ORDER BY a.symbol ASC
+        """),
+        {"portfolio_id": portfolio_id}
+    ).fetchall()
 
+    return [
+        {
+            "asset_id": int(row[0]),
+            "symbol": row[1],
+            "quantity": float(row[2]),
+        }
+        for row in rows
+    ]
 
 def compute_total_portfolio_value(db, portfolio_id: int, cash: float) -> float:
     """
@@ -534,11 +560,17 @@ def main(portfolio_id: int):
         current_cash = get_portfolio_cash(db, portfolio_id)
         total_portfolio_value = compute_total_portfolio_value(db, portfolio_id, current_cash)
         allowed_assets = get_allowed_assets_for_portfolio(db, portfolio_id)
+        current_positions = get_all_current_positions(db, portfolio_id)
 
-        if not allowed_assets:
-            print("No allowed assets found in portfolio_assets.")
+        allowed_asset_ids = {asset_id for asset_id, _ in allowed_assets}
+        held_but_unselected = [
+            position for position in current_positions
+            if position["asset_id"] not in allowed_asset_ids
+        ]
+
+        if not allowed_assets and not held_but_unselected:
+            print(f"No selected assets and no holdings to liquidate for portfolio {portfolio_id}.")
             return
-
         predictions = []
 
        # Predict all allowed assets and combine with recent sentiment
@@ -567,8 +599,8 @@ def main(portfolio_id: int):
                 })
             except Exception as e:
                 print(f"Skipping {symbol}: {e}")
-        if not predictions:
-            print("No predictions generated.")
+        if not predictions and not held_but_unselected:
+            print("No predictions and no positions to liquidate.")
             return
 
         # Compute dynamic investment fraction
@@ -775,6 +807,65 @@ def main(portfolio_id: int):
                         f"value={reason_item['value']:.6f}, "
                         f"shap={reason_item['shap']:.6f} -> {reason_item['direction']}"
                     )
+        # Force-sell positions that are no longer selected in portfolio_assets
+        for position in held_but_unselected:
+            asset_id = position["asset_id"]
+            symbol = position["symbol"]
+
+            latest_price = get_latest_price(db, asset_id)
+            current_position = get_current_position(db, portfolio_id, asset_id)
+
+            if current_position is None:
+                continue
+
+            _, current_qty, _ = current_position
+            current_qty = float(current_qty)
+
+            if current_qty <= 0 or latest_price <= 0:
+                continue
+
+            actual_amount = current_qty * latest_price
+
+            save_trade(
+                db=db,
+                portfolio_run_id=portfolio_run_id,
+                portfolio_id=portfolio_id,
+                asset_id=asset_id,
+                action="sell",
+                quantity=current_qty,
+                price=latest_price,
+                amount=actual_amount,
+            )
+
+            update_position(
+                db=db,
+                portfolio_id=portfolio_id,
+                asset_id=asset_id,
+                action="sell",
+                quantity=current_qty,
+                price=latest_price,
+            )
+
+            current_cash += actual_amount
+
+            executed_trades.append({
+                "action": "SELL",
+                "symbol": symbol,
+                "amount": round(actual_amount, 2),
+            })
+
+            if user_id is not None:
+                create_notification(
+                    db=db,
+                    user_id=user_id,
+                    portfolio_id=portfolio_id,
+                    title="Sell Signal Executed",
+                    message=f"A SELL trade was executed for {symbol} worth ${actual_amount:.2f}.",
+                    notification_type="trade",
+                )
+                db.commit()
+
+            print(f"FORCED SELL {symbol} | removed from selected assets | amount=${actual_amount:.2f}")        
         # Save final cash balance
         update_portfolio_cash(db, portfolio_id, current_cash)
         

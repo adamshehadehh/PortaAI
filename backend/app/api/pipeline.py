@@ -8,6 +8,7 @@ from app.db.session import SessionLocal
 from app.services.portfolio_valuation import compute_current_portfolio_value
 from ai_engine.services.portfolio_snapshots import create_portfolio_snapshot
 from ai_engine.optimization.decision_engine import main as run_decision_engine
+from sqlalchemy import text
 
 router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
 
@@ -104,17 +105,50 @@ def run_daily_pipeline(
 
     finally:
         db.close()
+        
 @router.post("/weekly-run")
 def run_weekly_pipeline(
     user_id: int = Depends(get_current_user_id),
     portfolio_id: int = Depends(get_current_user_portfolio_id),
 ):
     """
-    Run the full weekly pipeline:
-    1. rebalance portfolio
-    2. rebalance snapshot is created inside the decision engine
+    Run the weekly pipeline:
+    - rebalance portfolio
+    - snapshot handled inside decision engine
     """
+    db = SessionLocal()
+
     try:
+        selected_count_row = db.execute(
+            text("""
+                SELECT COUNT(*)
+                FROM portfolio_assets
+                WHERE portfolio_id = :portfolio_id
+            """),
+            {"portfolio_id": portfolio_id}
+        ).fetchone()
+
+        selected_count = int(selected_count_row[0]) if selected_count_row else 0
+
+        holdings_count_row = db.execute(
+            text("""
+                SELECT COUNT(*)
+                FROM portfolio_positions
+                WHERE portfolio_id = :portfolio_id
+                  AND quantity > 0
+            """),
+            {"portfolio_id": portfolio_id}
+        ).fetchone()
+
+        holdings_count = int(holdings_count_row[0]) if holdings_count_row else 0
+
+        if selected_count == 0 and holdings_count == 0:
+            return {
+                "message": "Weekly pipeline skipped: no assets selected and no holdings to liquidate.",
+                "triggered_by_user_id": user_id,
+                "portfolio_id": portfolio_id,
+            }
+
         run_decision_engine(portfolio_id=portfolio_id)
 
         return {
@@ -124,4 +158,10 @@ def run_weekly_pipeline(
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Weekly pipeline failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Weekly pipeline failed: {str(e)}"
+        )
+
+    finally:
+        db.close()

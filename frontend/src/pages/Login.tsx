@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { saveToken } from "@/lib/auth"
 import { BrainCircuit } from "lucide-react"
 import { useState } from "react"
-import { useNavigate } from "react-router-dom"
+import { Link,useNavigate } from "react-router-dom"
 type LoginResponse = {
   access_token: string
   token_type: string
@@ -119,7 +119,15 @@ export default function Login() {
               >
                 {loading ? "Signing in..." : "Enter Dashboard"}
               </Button>
-
+              <p className="mt-6 text-center text-sm text-slate-500">
+                Don’t have an account?{" "}
+                <Link
+                  to="/register"
+                  className="font-medium text-cyan-700 hover:underline"
+                >
+                  Register
+                </Link>
+              </p>
               <p className="text-center text-sm text-slate-500">
                 Secure login powered by FastAPI authentication
               </p>

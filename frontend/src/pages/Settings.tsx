@@ -12,27 +12,52 @@ type SettingsResponse = {
   rebalance_frequency: string
 }
 
+type AssetItem = {
+  id: number
+  symbol: string
+}
+
+type PortfolioAssetsResponse = {
+  portfolio_id: number
+  selected_asset_ids: number[]
+  selected_assets: AssetItem[]
+  all_assets: AssetItem[]
+}
+
 export default function Settings() {
   const [settings, setSettings] = useState<SettingsResponse | null>(null)
+  const [allAssets, setAllAssets] = useState<AssetItem[]>([])
+  const [selectedAssetIds, setSelectedAssetIds] = useState<number[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    async function fetchSettings() {
+    async function fetchPageData() {
       try {
         setLoading(true)
         setError(null)
 
-        const response = await apiFetch("http://127.0.0.1:8000/api/settings")
+        const [settingsRes, assetsRes] = await Promise.all([
+          apiFetch("http://127.0.0.1:8000/api/settings"),
+          apiFetch("http://127.0.0.1:8000/api/portfolio/assets"),
+        ])
 
-        if (!response.ok) {
+        if (!settingsRes.ok) {
           throw new Error("Failed to fetch settings")
         }
 
-        const data: SettingsResponse = await response.json()
-        setSettings(data)
+        if (!assetsRes.ok) {
+          throw new Error("Failed to fetch portfolio assets")
+        }
+
+        const settingsData: SettingsResponse = await settingsRes.json()
+        const assetsData: PortfolioAssetsResponse = await assetsRes.json()
+
+        setSettings(settingsData)
+        setAllAssets(assetsData.all_assets)
+        setSelectedAssetIds(assetsData.selected_asset_ids)
       } catch (err) {
         setError(err instanceof Error ? err.message : "Unknown error")
       } finally {
@@ -40,7 +65,7 @@ export default function Settings() {
       }
     }
 
-    fetchSettings()
+    fetchPageData()
   }, [])
 
   async function handleSave() {
@@ -51,17 +76,28 @@ export default function Settings() {
       setMessage(null)
       setError(null)
 
-      const response = await apiFetch("http://127.0.0.1:8000/api/settings", {
-        method: "PUT",
-        body: JSON.stringify(settings),
-      })
+      const [settingsRes, assetsRes] = await Promise.all([
+        apiFetch("http://127.0.0.1:8000/api/settings", {
+          method: "PUT",
+          body: JSON.stringify(settings),
+        }),
+        apiFetch("http://127.0.0.1:8000/api/portfolio/assets", {
+          method: "PUT",
+          body: JSON.stringify({
+            asset_ids: selectedAssetIds,
+          }),
+        }),
+      ])
 
-      if (!response.ok) {
+      if (!settingsRes.ok) {
         throw new Error("Failed to save settings")
       }
 
-      const data = await response.json()
-      setMessage(data.message || "Settings updated successfully")
+      if (!assetsRes.ok) {
+        throw new Error("Failed to save asset selection")
+      }
+
+      setMessage("Settings updated successfully")
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error")
     } finally {
@@ -69,9 +105,20 @@ export default function Settings() {
     }
   }
 
-  function updateField<K extends keyof SettingsResponse>(key: K, value: SettingsResponse[K]) {
+  function updateField<K extends keyof SettingsResponse>(
+    key: K,
+    value: SettingsResponse[K]
+  ) {
     if (!settings) return
     setSettings({ ...settings, [key]: value })
+  }
+
+  function toggleAsset(assetId: number) {
+    setSelectedAssetIds((prev) =>
+      prev.includes(assetId)
+        ? prev.filter((id) => id !== assetId)
+        : [...prev, assetId]
+    )
   }
 
   return (
@@ -86,7 +133,7 @@ export default function Settings() {
           </Badge>
         </div>
         <p className="text-slate-600">
-          Manage notification behavior and portfolio rebalance preferences.
+          Manage notification behavior, rebalance preferences, and asset selection.
         </p>
       </header>
 
@@ -122,7 +169,9 @@ export default function Settings() {
               <label className="flex items-center justify-between gap-4">
                 <div>
                   <p className="font-medium text-slate-900">In-app notifications</p>
-                  <p className="text-sm text-slate-500">Show notifications inside PortaAI.</p>
+                  <p className="text-sm text-slate-500">
+                    Show notifications inside PortaAI.
+                  </p>
                 </div>
                 <input
                   type="checkbox"
@@ -137,7 +186,9 @@ export default function Settings() {
               <label className="flex items-center justify-between gap-4">
                 <div>
                   <p className="font-medium text-slate-900">Email notifications</p>
-                  <p className="text-sm text-slate-500">Receive alerts by email later when enabled.</p>
+                  <p className="text-sm text-slate-500">
+                    Receive rebalance summary emails.
+                  </p>
                 </div>
                 <input
                   type="checkbox"
@@ -152,7 +203,9 @@ export default function Settings() {
               <label className="flex items-center justify-between gap-4">
                 <div>
                   <p className="font-medium text-slate-900">Trade notifications</p>
-                  <p className="text-sm text-slate-500">Notify when BUY or SELL trades are executed.</p>
+                  <p className="text-sm text-slate-500">
+                    Notify when BUY or SELL trades are executed.
+                  </p>
                 </div>
                 <input
                   type="checkbox"
@@ -167,7 +220,9 @@ export default function Settings() {
               <label className="flex items-center justify-between gap-4">
                 <div>
                   <p className="font-medium text-slate-900">Rebalance notifications</p>
-                  <p className="text-sm text-slate-500">Notify when a rebalance cycle completes.</p>
+                  <p className="text-sm text-slate-500">
+                    Notify when a rebalance cycle completes.
+                  </p>
                 </div>
                 <input
                   type="checkbox"
@@ -187,10 +242,14 @@ export default function Settings() {
             </CardHeader>
             <CardContent className="space-y-5">
               <div className="space-y-2">
-                <label className="font-medium text-slate-900">Rebalance frequency</label>
+                <label className="font-medium text-slate-900">
+                  Rebalance frequency
+                </label>
                 <select
                   value={settings.rebalance_frequency}
-                  onChange={(e) => updateField("rebalance_frequency", e.target.value)}
+                  onChange={(e) =>
+                    updateField("rebalance_frequency", e.target.value)
+                  }
                   className="w-full rounded-xl border border-slate-300 px-3 py-2"
                 >
                   <option value="weekly">Weekly</option>
@@ -201,6 +260,44 @@ export default function Settings() {
                   Controls the preferred strategy rebalance frequency.
                 </p>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-2xl border-slate-200 shadow-sm">
+            <CardHeader>
+              <CardTitle>Asset Selection</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-slate-500">
+                Select which assets PortaAI is allowed to manage. If you remove an asset that you currently hold, PortaAI will exit that position on the next rebalance.
+              </p>
+
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {allAssets.map((asset) => (
+                  <label
+                    key={asset.id}
+                    className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3"
+                  >
+                    <span className="font-medium text-slate-800">{asset.symbol}</span>
+                    <input
+                      type="checkbox"
+                      checked={selectedAssetIds.includes(asset.id)}
+                      onChange={() => toggleAsset(asset.id)}
+                      className="h-5 w-5"
+                    />
+                  </label>
+                ))}
+              </div>
+
+              <p className="text-sm text-slate-500">
+                Selected assets: {selectedAssetIds.length}
+              </p>
+
+              {selectedAssetIds.length === 0 && (
+                <p className="text-sm font-medium text-amber-600">
+                  No assets are currently selected. If your portfolio still holds positions, the next rebalance will exit them to cash. If no holdings remain, rebalancing will stay disabled until assets are selected again.
+                </p>
+              )}
             </CardContent>
           </Card>
 

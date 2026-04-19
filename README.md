@@ -357,3 +357,40 @@ This allows the AI workflow to be triggered from the backend rather than manuall
 - Moved authentication configuration to environment variables
 - Removed hardcoded secret loading from source code
 - Updated JWT token creation so each login generates a unique token
+## 🔄 Latest Update – Registration, Asset Selection, Rebalance Protection, and UI Polish
+
+### User Registration and Onboarding
+- Added a backend user registration endpoint
+- Automatically creates a default portfolio when a new user registers
+- Automatically creates default user settings on registration
+- Automatically assigns starter assets to new portfolios
+- Added a frontend Register page and linked it from the Login page
+- Enabled automatic login immediately after successful registration
+
+### Asset Selection Management
+- Added backend portfolio asset management endpoints to fetch and update selected assets
+- Integrated asset selection into the Settings page
+- Users can now customize which assets PortaAI is allowed to manage in their portfolio
+
+### Rebalance Safety and Asset Exit Logic
+- Added backend protection to prevent rebalancing when no assets are selected and no holdings exist
+- Updated rebalancing logic so that if a user removes an asset they still hold, PortaAI exits that position on the next rebalance
+- Improved weekly pipeline behavior to skip cleanly when there is nothing to rebalance
+
+### Empty-State UX Improvements
+- Added empty-state handling across key pages:
+  - Dashboard
+  - Positions
+  - Trades
+  - Explainability
+- New users and inactive portfolios now see clear guidance instead of empty charts or tables
+
+### Topbar and Sidebar Polish
+- Made the topbar sticky so it remains visible while scrolling
+- Replaced the static avatar with a dynamic user initial derived from the account email
+- Added email tooltip on avatar hover
+- Moved logout action to the sidebar for cleaner navigation structure
+- Added logout confirmation dialog to prevent accidental sign-out
+
+### Notification Badge UX
+- Improved topbar notification badge behavior to display `20+` when unread notifications exceed the visible list limit

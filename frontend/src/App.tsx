@@ -9,13 +9,15 @@ import Predictions from "@/pages/Predictions"
 import Settings from "@/pages/Settings"
 import Trades from "@/pages/Trades"
 import Notifications from "@/pages/Notifications"
+import Register from "@/pages/Register"
+
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="/login" element={<Login />} />
-
+        <Route path="/register" element={<Register />} />
         <Route
           path="/app"
           element={

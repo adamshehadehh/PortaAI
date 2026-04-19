@@ -41,7 +41,12 @@ type HistoryResponse = {
   portfolio_id: number
   history: HistoryItem[]
 }
-
+type PortfolioAssetsResponse = {
+  portfolio_id: number
+  selected_asset_ids: number[]
+  selected_assets: { id: number; symbol: string }[]
+  all_assets: { id: number; symbol: string }[]
+}
 const pieColors = [
   "#0891b2",
   "#0f172a",
@@ -96,6 +101,11 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null)
   const [rebalanceLoading, setRebalanceLoading] = useState(false)
   const [rebalanceMessage, setRebalanceMessage] = useState<string | null>(null)
+  const [selectedAssetIds, setSelectedAssetIds] = useState<number[]>([])
+  const [positionsCount, setPositionsCount] = useState(0)
+  const canRebalance = selectedAssetIds.length > 0 || positionsCount > 0
+  const hasHistory = history.length > 0
+  const hasAllocation = allocation.length > 0
   useEffect(() => {
     async function fetchDashboardData(showLoading = false) {
       try {
@@ -105,20 +115,26 @@ export default function Dashboard() {
 
         setError(null)
 
-        const [summaryRes, allocationRes, historyRes] = await Promise.all([
+        const [summaryRes, allocationRes, historyRes, assetsRes, positionsRes] = await Promise.all([
           apiFetch("http://127.0.0.1:8000/api/dashboard/summary"),
           apiFetch("http://127.0.0.1:8000/api/dashboard/allocation"),
           apiFetch("http://127.0.0.1:8000/api/dashboard/history"),
+          apiFetch("http://127.0.0.1:8000/api/portfolio/assets"),
+          apiFetch("http://127.0.0.1:8000/api/dashboard/positions"),
         ])
 
         if (!summaryRes.ok) throw new Error("Failed to fetch dashboard summary")
         if (!allocationRes.ok) throw new Error("Failed to fetch allocation data")
         if (!historyRes.ok) throw new Error("Failed to fetch history data")
-
+        if (!assetsRes.ok) throw new Error("Failed to fetch selected assets")
+        if (!positionsRes.ok) throw new Error("Failed to fetch positions")
+        
         const summaryData: DashboardSummary = await summaryRes.json()
         const allocationData: AllocationResponse = await allocationRes.json()
         const historyData: HistoryResponse = await historyRes.json()
-
+        const assetsData: PortfolioAssetsResponse = await assetsRes.json()
+        const positionsData = await positionsRes.json()
+        
         setSummary((prev) => {
           const prevJson = JSON.stringify(prev)
           const nextJson = JSON.stringify(summaryData)
@@ -136,6 +152,12 @@ export default function Dashboard() {
           const nextJson = JSON.stringify(historyData.history)
           return prevJson !== nextJson ? historyData.history : prev
         })
+        setSelectedAssetIds((prev) => {
+          const prevJson = JSON.stringify(prev)
+          const nextJson = JSON.stringify(assetsData.selected_asset_ids)
+          return prevJson !== nextJson ? assetsData.selected_asset_ids : prev
+        })
+        setPositionsCount(Array.isArray(positionsData.positions) ? positionsData.positions.length : 0)
       } catch (err) {
         setError(err instanceof Error ? err.message : "Unknown error")
       } finally {
@@ -208,7 +230,7 @@ export default function Dashboard() {
 
           <Button
             onClick={handleRebalance}
-            disabled={rebalanceLoading}
+            disabled={rebalanceLoading || !canRebalance}
             className="rounded-xl bg-cyan-600 hover:bg-cyan-700"
           >
             {rebalanceLoading ? "Rebalancing..." : "Rebalance Now"}
@@ -218,6 +240,17 @@ export default function Dashboard() {
         {rebalanceMessage && (
           <p className="text-sm font-medium text-emerald-600">
             {rebalanceMessage}
+          </p>
+        )}
+        {selectedAssetIds.length === 0 && positionsCount > 0 && !loading && (
+          <p className="text-sm font-medium text-amber-600">
+            No assets are currently selected. Running rebalance will exit all remaining positions to cash.
+          </p>
+        )}
+
+        {selectedAssetIds.length === 0 && positionsCount === 0 && !loading && (
+          <p className="text-sm font-medium text-amber-600">
+            No assets selected. Add assets in Settings to enable rebalancing.
           </p>
         )}
       </header>
@@ -260,6 +293,13 @@ export default function Dashboard() {
               <div className="flex h-full items-center justify-center text-slate-500">
                 Loading chart...
               </div>
+            ) : !hasHistory ? (
+              <div className="flex h-full flex-col items-center justify-center text-center text-slate-500">
+                <p className="font-medium text-slate-700">No portfolio history yet</p>
+                <p className="mt-2 text-sm">
+                  Run your first rebalance or daily pipeline to start tracking portfolio value over time.
+                </p>
+              </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={history}>
@@ -290,6 +330,13 @@ export default function Dashboard() {
               <div className="flex h-full items-center justify-center text-slate-500">
                 Loading chart...
               </div>
+            ) : !hasAllocation ? (
+              <div className="flex h-full flex-col items-center justify-center text-center text-slate-500">
+                <p className="font-medium text-slate-700">No active allocation yet</p>
+                <p className="mt-2 text-sm">
+                  Your portfolio is currently fully in cash or has no open positions.
+                </p>
+              </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
@@ -319,14 +366,34 @@ export default function Dashboard() {
           <CardTitle>Dashboard Summary</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3 text-slate-600">
-          <p>
-            PortaAI currently maintains a confidence-adjusted allocation between
-            cash and selected assets.
-          </p>
-          <p>
-            Portfolio decisions are driven by XGBoost forecasts, transformer-based
-            sentiment analysis, and explainable AI signals.
-          </p>
+          {selectedAssetIds.length === 0 && positionsCount === 0 ? (
+            <>
+              <p>
+                Your portfolio is currently inactive because no assets are selected and no positions are open.
+              </p>
+              <p>
+                Add assets in Settings to allow PortaAI to start managing your portfolio.
+              </p>
+            </>
+          ) : selectedAssetIds.length === 0 && positionsCount > 0 ? (
+            <>
+              <p>
+                No assets are currently selected, but your portfolio still holds open positions.
+              </p>
+              <p>
+                Running rebalance will exit the remaining holdings and convert them to cash.
+              </p>
+            </>
+          ) : (
+            <>
+              <p>
+                PortaAI currently maintains a confidence-adjusted allocation between cash and selected assets.
+              </p>
+              <p>
+                Portfolio decisions are driven by XGBoost forecasts, transformer-based sentiment analysis, and explainable AI signals.
+              </p>
+            </>
+          )}
         </CardContent>
       </Card>
     </div>

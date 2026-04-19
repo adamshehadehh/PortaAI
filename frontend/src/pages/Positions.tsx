@@ -10,7 +10,12 @@ import {
 } from "@/components/ui/table"
 import { apiFetch } from "@/lib/api"
 import { useEffect, useState } from "react"
-
+type PortfolioAssetsResponse = {
+  portfolio_id: number
+  selected_asset_ids: number[]
+  selected_assets: { id: number; symbol: string }[]
+  all_assets: { id: number; symbol: string }[]
+}
 type Position = {
   symbol: string
   quantity: number
@@ -46,7 +51,9 @@ export default function Positions() {
   const [positions, setPositions] = useState<Position[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-
+  const [selectedAssetIds, setSelectedAssetIds] = useState<number[]>([])
+  const hasPositions = positions.length > 0
+  const hasSelectedAssets = selectedAssetIds.length > 0
   useEffect(() => {
     async function fetchPositions(showLoading = false) {
       try {
@@ -56,18 +63,32 @@ export default function Positions() {
 
         setError(null)
 
-        const response = await apiFetch("http://127.0.0.1:8000/api/dashboard/positions")
+        const [positionsRes, assetsRes] = await Promise.all([
+          apiFetch("http://127.0.0.1:8000/api/dashboard/positions"),
+          apiFetch("http://127.0.0.1:8000/api/portfolio/assets"),
+        ])
 
-        if (!response.ok) {
+        if (!positionsRes.ok) {
           throw new Error("Failed to fetch positions")
         }
 
-        const data: PositionsResponse = await response.json()
+        if (!assetsRes.ok) {
+          throw new Error("Failed to fetch selected assets")
+        }
+
+        const positionsData: PositionsResponse = await positionsRes.json()
+        const assetsData: PortfolioAssetsResponse = await assetsRes.json()
 
         setPositions((prev) => {
           const prevJson = JSON.stringify(prev)
-          const nextJson = JSON.stringify(data.positions)
-          return prevJson !== nextJson ? data.positions : prev
+          const nextJson = JSON.stringify(positionsData.positions)
+          return prevJson !== nextJson ? positionsData.positions : prev
+        })
+
+        setSelectedAssetIds((prev) => {
+          const prevJson = JSON.stringify(prev)
+          const nextJson = JSON.stringify(assetsData.selected_asset_ids)
+          return prevJson !== nextJson ? assetsData.selected_asset_ids : prev
         })
       } catch (err) {
         setError(err instanceof Error ? err.message : "Unknown error")
@@ -127,6 +148,20 @@ export default function Positions() {
         <CardContent>
           {loading ? (
             <p className="text-slate-600">Loading positions...</p>
+          ) : !hasPositions ? (
+            <div className="flex flex-col items-center justify-center py-10 text-center text-slate-500">
+              <p className="font-medium text-slate-700">No active positions</p>
+
+              {hasSelectedAssets ? (
+                <p className="mt-2 text-sm">
+                  Run your first rebalance to start building your portfolio.
+                </p>
+              ) : (
+                <p className="mt-2 text-sm">
+                  No assets selected. Add assets in Settings to enable portfolio management.
+                </p>
+              )}
+            </div>
           ) : (
             <Table>
               <TableHeader>

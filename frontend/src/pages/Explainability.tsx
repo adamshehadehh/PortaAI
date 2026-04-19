@@ -61,7 +61,7 @@ export default function Explainability() {
   const [explanations, setExplanations] = useState<ExplanationItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-
+  const hasExplanations = explanations.length > 0
   useEffect(() => {
     async function fetchExplainability(showLoading = false) {
       try {
@@ -139,6 +139,19 @@ export default function Explainability() {
         <Card className="rounded-2xl border-slate-200 shadow-sm">
           <CardContent className="pt-6">
             <p className="text-slate-600">Loading explainability data...</p>
+          </CardContent>
+        </Card>
+      ) : !hasExplanations ? (
+        <Card className="rounded-2xl border-slate-200 shadow-sm">
+          <CardContent className="py-10">
+            <div className="flex flex-col items-center justify-center text-center text-slate-500">
+              <p className="font-medium text-slate-700">
+                No explainability data available yet
+              </p>
+              <p className="mt-2 text-sm">
+                Run the daily pipeline or your first rebalance to generate model insights.
+              </p>
+            </div>
           </CardContent>
         </Card>
       ) : (

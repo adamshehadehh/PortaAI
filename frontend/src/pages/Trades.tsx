@@ -59,7 +59,7 @@ export default function Trades() {
   const [trades, setTrades] = useState<Trade[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-
+  const hasTrades = trades.length > 0
   useEffect(() => {
     async function fetchTrades(showLoading = false) {
       try {
@@ -140,6 +140,13 @@ export default function Trades() {
         <CardContent>
           {loading ? (
             <p className="text-slate-600">Loading trades...</p>
+          ) : !hasTrades ? (
+            <div className="flex flex-col items-center justify-center py-10 text-center text-slate-500">
+              <p className="font-medium text-slate-700">No trades yet</p>
+              <p className="mt-2 text-sm">
+                Run your first rebalance to generate trade activity.
+              </p>
+            </div>
           ) : (
             <Table>
               <TableHeader>
