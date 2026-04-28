@@ -179,6 +179,7 @@ http://localhost:5173
 * Sentiment analysis is integrated into the model as a feature
 * The decision engine uses predicted returns to generate actions
 * The system currently operates on periodic updates
+* The FinBERT model is stored locally on the development environment and is not included in the repository due to its large size.
 
 ---
 
